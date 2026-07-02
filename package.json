@@ -1,0 +1,17 @@
+{
+  "name": "markdown-to-flow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/code.ts --bundle --outfile=dist/code.js --target=es2017",
+    "watch": "npm run build -- --watch",
+    "test": "node --test test/parseMermaid.test.ts test/parseMarkdown.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.100.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  }
+}

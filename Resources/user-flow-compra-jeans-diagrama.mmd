@@ -1,0 +1,40 @@
+flowchart TD
+    A([Inicio: usuario entra al website y navega a Jeans]) --> B[Listado de jeans: filtra por talla/color/corte/precio]
+    B --> C[Detalle de producto: imágenes, precio, descripción, tallas y entrega]
+    C --> D[Selecciona talla y añade al carrito]
+    D --> E{¿Stock disponible?}
+    E -->|No| F[Aviso sin stock + sugerir tallas alternativas]
+    F --> C
+    E -->|Sí| G[Carrito: pulsa Finalizar compra]
+    G --> H{¿Sesión iniciada?}
+    H -->|Sí| P[Resumen y pago]
+    H -->|No| I[/Opciones de checkout: iniciar sesión / crear cuenta / invitado/]
+    I -->|Iniciar sesión| J[/Login/]
+    J --> K{¿Login correcto?}
+    K -->|No| L[Error de credenciales + reintento]
+    L --> I
+    K -->|Sí| P
+    I -->|Crear cuenta| M[/Registro/]
+    M --> P
+    I -->|Continuar como invitado| N[Checkout invitado: contacto, dirección y envío]
+    N --> O{¿Datos válidos?}
+    O -->|No| Q[Error inline en campos]
+    Q --> N
+    O -->|Sí| P
+    P --> R{¿Pago aprobado?}
+    R -->|No| S[Error de pago + conservar datos + reintento]
+    S --> P
+    R -->|Sí| T[Confirmación: genera número de pedido]
+    T --> U[Envía email de confirmación]
+    U --> W[Ofrecer crear cuenta post-compra opcional]
+    U --> V([Fin: pedido confirmado])
+    W --> V
+
+    classDef success fill:#DCFCE7,stroke:#16A34A,color:#166534;
+    classDef error fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D;
+    classDef decision fill:#FEF9C3,stroke:#CA8A04,color:#713F12;
+    classDef guest fill:#ECFDF5,stroke:#10B981,color:#064E3B,stroke-width:2px;
+    class E,H,K,O,R decision;
+    class F,L,Q,S error;
+    class N guest;
+    class T,U,V success;

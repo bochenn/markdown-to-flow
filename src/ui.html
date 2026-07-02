@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: Inter, sans-serif; font-size: 12px; margin: 16px; color: #333; }
+  h2 { font-size: 14px; margin: 0 0 12px; }
+  label { display: block; margin: 12px 0 4px; font-weight: 600; }
+  textarea { width: 100%; box-sizing: border-box; height: 160px; font-family: monospace; font-size: 11px; }
+  .toggle { display: flex; align-items: flex-start; gap: 6px; margin: 14px 0 0; font-weight: 400; cursor: pointer; }
+  .toggle input { margin: 2px 0 0; }
+  button { margin-top: 14px; padding: 8px 16px; background: #18a0fb; color: #fff; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  button:hover { background: #0d8de3; }
+  #status { margin-top: 12px; white-space: pre-wrap; }
+  #status.error { color: #c33; }
+</style>
+</head>
+<body>
+  <h2>Markdown → Sticky notes</h2>
+
+  <label for="archivo">Archivo .md de user flow</label>
+  <input type="file" id="archivo" accept=".md,.markdown,text/markdown">
+
+  <label for="texto">…o pegá el markdown acá</label>
+  <textarea id="texto" placeholder="### Diagram&#10;&#10;```mermaid&#10;flowchart TD&#10;    A([Inicio]) --> B[Paso]&#10;```"></textarea>
+
+  <label class="toggle">
+    <input type="checkbox" id="docs" checked>
+    <span>Generar también cards de documentación (steps, decisiones, assumptions, etc.)</span>
+  </label>
+
+  <label class="toggle">
+    <input type="checkbox" id="edgeCases">
+    <span>Separar edge cases y errores en un flujo aparte</span>
+  </label>
+
+  <button id="generar">Generar</button>
+  <div id="status"></div>
+
+<script>
+  const archivo = document.getElementById('archivo');
+  const texto = document.getElementById('texto');
+  const docs = document.getElementById('docs');
+  const edgeCases = document.getElementById('edgeCases');
+  const status = document.getElementById('status');
+
+  function mostrar(mensaje, esError) {
+    status.textContent = mensaje;
+    status.className = esError ? 'error' : '';
+  }
+
+  archivo.onchange = () => {
+    const f = archivo.files[0];
+    if (!f) return;
+    const lector = new FileReader();
+    lector.onload = () => {
+      texto.value = lector.result;
+      mostrar('Archivo cargado: ' + f.name);
+    };
+    lector.onerror = () => mostrar('No se pudo leer el archivo.', true);
+    lector.readAsText(f);
+  };
+
+  document.getElementById('generar').onclick = () => {
+    if (!texto.value.trim()) {
+      mostrar('No hay contenido markdown: subí un archivo o pegá el texto.', true);
+      return;
+    }
+    mostrar('Generando…');
+    parent.postMessage({ pluginMessage: {
+      type: 'generar',
+      markdown: texto.value,
+      generarDocs: docs.checked,
+      separarEdgeCases: edgeCases.checked,
+    } }, '*');
+  };
+
+  onmessage = (evento) => {
+    const msg = evento.data.pluginMessage;
+    if (!msg) return;
+    if (msg.type === 'estado-inicial') {
+      docs.checked = msg.generarDocs;             // toggles persistidos entre sesiones
+      edgeCases.checked = msg.separarEdgeCases;
+    } else if (msg.type === 'ok') {
+      mostrar(msg.resumen + (msg.warnings.length ? '\nAvisos:\n- ' + msg.warnings.join('\n- ') : ''));
+    } else if (msg.type === 'error') {
+      mostrar('Error: ' + msg.mensaje, true);
+    }
+  };
+</script>
+</body>
+</html>
