@@ -2,33 +2,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { extraerMermaid, parsearFlowchart, hexARgb } from '../src/parseMermaid.ts';
-import { calcularLayout, posicionarOffPath, esOffPath, SEPARACION_MIN_COLUMNA } from '../src/layoutDiagram.ts';
+import { parsearFlowchart, hexARgb } from '../src/parseMermaid.ts';
+import { calcularLayout, posicionarOffPath, esOffPath, SEPARACION_MIN_COLUMNA, SEPARACION_MIN_FILA } from '../src/layoutDiagram.ts';
 import { resolverEstilo } from '../src/renderFigma.ts';
+import { analizarDocumento } from '../src/parseMarkdown.ts';
 
 const md = readFileSync(new URL('../Resources/user-flow-compra-jeans-invitado.md', import.meta.url), 'utf8');
 const mmd = readFileSync(new URL('../Resources/user-flow-compra-jeans-diagrama.mmd', import.meta.url), 'utf8');
-
-test('extrae el bloque mermaid de la sección ### Diagram', () => {
-  const { codigo, warnings } = extraerMermaid(md);
-  assert.ok(codigo.includes('flowchart TD'));
-  assert.equal(warnings.length, 0);
-});
-
-test('falla con mensaje claro si no hay sección Diagram o bloque mermaid', () => {
-  assert.throws(() => extraerMermaid('# Solo un título'), /### Diagram/);
-  assert.throws(() => extraerMermaid('### Diagram\n\nsin bloque'), /mermaid/);
-});
-
-test('avisa si hay más de un bloque mermaid y usa el primero', () => {
-  const doble = '### Diagram\n\n```mermaid\nflowchart TD\n  A[uno]\n```\n\n```mermaid\nflowchart TD\n  B[dos]\n```\n';
-  const { codigo, warnings } = extraerMermaid(doble);
-  assert.ok(codigo.includes('A[uno]'));
-  assert.equal(warnings.length, 1);
-});
+const edgeMd = readFileSync(new URL('../Resources/user-flow-compra-jeans-invitado_edge.md', import.meta.url), 'utf8');
+// la extracción del bloque desde el documento vive en parseMarkdown (analizarDocumento)
+const codigoMd = analizarDocumento(md).diagramas[0].codigo;
 
 test('parsea los 22 nodos con sus formas y clases', () => {
-  const grafo = parsearFlowchart(extraerMermaid(md).codigo);
+  const grafo = parsearFlowchart(codigoMd);
   assert.equal(grafo.direccion, 'TD');
   assert.equal(grafo.nodos.size, 22);
   assert.equal(grafo.warnings.length, 0);
@@ -50,7 +36,7 @@ test('parsea los 22 nodos con sus formas y clases', () => {
 });
 
 test('parsea los edges con labels y el loop de reintento', () => {
-  const grafo = parsearFlowchart(extraerMermaid(md).codigo);
+  const grafo = parsearFlowchart(codigoMd);
   assert.equal(grafo.edges.length, 28);
 
   const buscar = (o: string, d: string) => grafo.edges.find((e) => e.origen === o && e.destino === d);
@@ -63,6 +49,55 @@ test('parsea los edges con labels y el loop de reintento', () => {
   assert.equal(buscar('A', 'B')!.label, undefined);
 });
 
+test('reconoce el círculo doble (((texto))) y el simple ((texto)) como conector', () => {
+  const grafo = parsearFlowchart('flowchart TD\nJ[Login] --> CO(((CO))):::conector\nP[Pago] --> PAY((PAY))\n');
+  assert.equal(grafo.warnings.length, 0);
+  const co = grafo.nodos.get('CO')!;
+  assert.equal(co.forma, 'conector');
+  assert.equal(co.texto, 'CO'); // el triple no se matchea como doble con paréntesis colgando
+  assert.ok(co.clases.includes('conector'));
+  assert.equal(grafo.nodos.get('PAY')!.forma, 'conector');
+  assert.equal(grafo.nodos.get('PAY')!.texto, 'PAY');
+  assert.ok(grafo.edges.find((e) => e.origen === 'J' && e.destino === 'CO'), 'el edge J --> CO debe existir');
+});
+
+test('forma no soportada: rectángulo default + warning, sin perder el edge', () => {
+  const grafo = parsearFlowchart(
+    'flowchart TD\nA[a] --> H{{Hexágono}}\nB[b] --> S[[Subrutina]]\nC[c] --> D[(Base de datos)]\n',
+  );
+  assert.equal(grafo.nodos.get('H')!.forma, 'proceso');
+  assert.equal(grafo.warnings.length, 3);
+  assert.ok(grafo.warnings[0].includes("'H'"));
+  assert.ok(grafo.warnings[0].includes('{{Hexágono}}'));
+
+  for (const [id, texto] of [['H', 'Hexágono'], ['S', 'Subrutina'], ['D', 'Base de datos']] as const) {
+    assert.equal(grafo.nodos.get(id)!.forma, 'proceso'); // fallback
+    assert.equal(grafo.nodos.get(id)!.texto, texto);     // texto limpio, sin delimitadores
+  }
+  assert.equal(grafo.edges.length, 3); // ningún edge perdido
+});
+
+test('los 5 bloques del _edge.md parsean sin líneas perdidas', () => {
+  const diagramas = analizarDocumento(edgeMd).diagramas;
+  assert.equal(diagramas.length, 5);
+  for (const d of diagramas) {
+    const grafo = parsearFlowchart(d.codigo);
+    const perdidas = grafo.warnings.filter((w) => w.includes('Unrecognized mermaid line'));
+    assert.equal(perdidas.length, 0, `líneas perdidas en "${d.titulo}": ${perdidas.join(' | ')}`);
+  }
+  // los conectores del flujo principal, con sus edges de entrada
+  const principal = parsearFlowchart(diagramas[0].codigo);
+  assert.equal(principal.nodos.get('CO')!.forma, 'conector');
+  assert.ok(principal.edges.find((e) => e.origen === 'J' && e.destino === 'CO'));
+  assert.ok(principal.edges.find((e) => e.origen === 'V' && e.destino === 'OK'));
+});
+
+test('<br/> en textos y labels de mermaid se vuelve salto de línea real', () => {
+  const grafo = parsearFlowchart('flowchart TD\nA[Muestra opciones:<br/>Iniciar sesión] -->|No<br>autenticado| B[b]\n');
+  assert.equal(grafo.nodos.get('A')!.texto, 'Muestra opciones:\nIniciar sesión');
+  assert.equal(grafo.edges[0].label, 'No\nautenticado');
+});
+
 test('tolera líneas desconocidas y comentarios sin crashear', () => {
   const grafo = parsearFlowchart('flowchart TD\n%% comentario\nA[uno] --> B[dos]\nesto no es mermaid válido !!\n');
   assert.equal(grafo.nodos.size, 2);
@@ -70,7 +105,7 @@ test('tolera líneas desconocidas y comentarios sin crashear', () => {
 });
 
 test('el layout asigna niveles top-down sin colgarse con ciclos', () => {
-  const grafo = parsearFlowchart(extraerMermaid(md).codigo);
+  const grafo = parsearFlowchart(codigoMd);
   const posiciones = calcularLayout(grafo);
   assert.equal(posiciones.size, 22);
 
@@ -87,7 +122,7 @@ test('el layout asigna niveles top-down sin colgarse con ciclos', () => {
 });
 
 test('parsea los estilos de classDef en un mapa', () => {
-  const grafo = parsearFlowchart(extraerMermaid(md).codigo);
+  const grafo = parsearFlowchart(codigoMd);
   assert.deepEqual(grafo.classDefs.get('error'), { fill: '#fde', stroke: '#c33', color: '#900' });
 
   const conDash = parsearFlowchart('flowchart TD\nA[uno]\nclassDef optional fill:#f3e9ff,stroke:#8e5fd6,stroke-dasharray:4 2;\n');
@@ -139,7 +174,7 @@ test('un nodo huérfano va a una fila aparte', () => {
 });
 
 test('calcularLayout con exclusión: el happy path queda sin huecos', () => {
-  const grafo = parsearFlowchart(extraerMermaid(md).codigo);
+  const grafo = parsearFlowchart(codigoMd);
   const offPath = new Set(Array.from(grafo.nodos.values()).filter(esOffPath).map((n) => n.id));
   assert.deepEqual(Array.from(offPath).sort(), ['F', 'L', 'Q', 'S']);
 
@@ -157,7 +192,7 @@ test('calcularLayout con exclusión: el happy path queda sin huecos', () => {
 });
 
 test('posicionarOffPath alinea cada error con su decisión de origen', () => {
-  const grafo = parsearFlowchart(extraerMermaid(md).codigo);
+  const grafo = parsearFlowchart(codigoMd);
   const offPath = new Set(['F', 'L', 'Q', 'S']);
   const principal = calcularLayout(grafo, offPath);
   const columna = posicionarOffPath(grafo, offPath, principal);
@@ -175,6 +210,42 @@ test('posicionarOffPath alinea cada error con su decisión de origen', () => {
   for (const p of columna.values()) {
     assert.equal(p.x, columna.get('F')!.x);
     assert.ok(p.x > maxX);
+  }
+});
+
+test('layout horizontal: niveles en columnas (X) y filas distribuidas en Y', () => {
+  const grafo = parsearFlowchart(codigoMd);
+  const posV = calcularLayout(grafo);
+  const posH = calcularLayout(grafo, undefined, 'horizontal');
+
+  // mismos niveles en ambas direcciones, solo cambia el eje
+  assert.equal(posH.get('B')!.nivel, posV.get('B')!.nivel);
+  // A→B avanza en X (no en Y) y comparten fila
+  assert.ok(posH.get('B')!.x > posH.get('A')!.x);
+  assert.equal(posH.get('B')!.y, posH.get('A')!.y);
+  // F y G comparten nivel: misma columna X, distinta Y
+  assert.equal(posH.get('F')!.x, posH.get('G')!.x);
+  assert.notEqual(posH.get('F')!.y, posH.get('G')!.y);
+});
+
+test('posicionarOffPath horizontal: fila debajo, alineada al X de la decisión de origen', () => {
+  const grafo = parsearFlowchart(codigoMd);
+  const offPath = new Set(['F', 'L', 'Q', 'S']);
+  const principal = calcularLayout(grafo, offPath, 'horizontal');
+  const fila = posicionarOffPath(grafo, offPath, principal, 'horizontal');
+
+  assert.equal(fila.get('F')!.x, principal.get('E')!.x);
+  assert.equal(fila.get('S')!.x, principal.get('R')!.x);
+  assert.equal(fila.get('L')!.x, principal.get('K')!.x);
+  // K y O comparten columna: Q se empuja en X lo mínimo para no pisar a L
+  assert.equal(fila.get('Q')!.x, fila.get('L')!.x + SEPARACION_MIN_FILA);
+
+  // todos en la misma fila, debajo del flujo principal
+  let maxY = 0;
+  for (const p of principal.values()) maxY = Math.max(maxY, p.y);
+  for (const p of fila.values()) {
+    assert.equal(p.y, fila.get('F')!.y);
+    assert.ok(p.y > maxY);
   }
 });
 

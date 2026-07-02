@@ -1,54 +1,117 @@
 // Main thread del plugin: orquestación y mensajería con la UI.
-// El diagrama se genera siempre. Dos toggles independientes y combinables,
-// persistidos en clientStorage: generarDocs (cards de documentación) y
-// separarEdgeCases (nodos de error en una columna aparte).
+// Settings persistidos en clientStorage: generarDocs, separarEdgeCases,
+// direccionFlujo (vertical/horizontal, prioridad sobre la del mermaid),
+// repetirFlow (card de resumen repetida al inicio de cada flujo) e idioma.
+// Se genera UN diagrama por cada bloque mermaid detectado, apilados en orden;
+// cada flujo lleva su identificador FLW0N en cards, Sections y canvas.
 
-import { extraerMermaid, parsearFlowchart, Forma } from './parseMermaid.ts';
-import { calcularLayout, posicionarOffPath, esOffPath } from './layoutDiagram.ts';
-import { extraerDocumentacion } from './parseMarkdown.ts';
+import { parsearFlowchart, Grafo } from './parseMermaid.ts';
+import { calcularLayout, posicionarOffPath, esOffPath, Direccion } from './layoutDiagram.ts';
+import { analizarDocumento, TipoSeccion, SeccionDetectada } from './parseMarkdown.ts';
+import { t } from './i18n.ts';
+import type { Idioma } from './i18n.ts';
 import {
   FUENTE,
   FUENTE_REGULAR,
   FUENTE_BOLD,
   ANCHO_CARD,
+  ComponentesBase,
   resolverEstilo,
   createShapeComponents,
   createDiagramNodeInstance,
   createConnectorLike,
   createSectionCard,
+  crearTituloFlujo,
+  crearAnotacionConector,
   crearSection,
 } from './renderFigma.ts';
 
 const CLAVE_DOCS = 'generarDocs';
 const CLAVE_EDGE_CASES = 'separarEdgeCases';
+const CLAVE_IDIOMA = 'idioma';
+const CLAVE_DIRECCION = 'direccionFlujo';
+const CLAVE_REPETIR_FLOW = 'repetirFlow';
 const SEPARACION_CARDS = 40;
-const MARGEN_COLUMNA = 200; // entre la columna de cards y el diagrama
+const MARGEN_COLUMNA = 200;        // entre la columna de cards y el diagrama
+const MARGEN_CARD_FLOW = 40;       // entre título/card repetida y el primer nodo
+const ESCALA_CARD_FLOW = 0.7;      // la copia repetida es más chica que la original
+const SEPARACION_DIAGRAMAS = 450;  // entre diagramas apilados (cubre media forma, card repetida y margen de Section)
 
-figma.showUI(__html__, { width: 380, height: 560 });
+// headers canónicos traducibles; las cards de tipo titulo/flow/generica
+// conservan el heading original del archivo (contenido del usuario)
+const HEADERS_CONOCIDOS: Partial<Record<TipoSeccion, string>> = {
+  steps: 'canvas.cardSteps',
+  decision: 'canvas.cardDecision',
+  edgeCases: 'canvas.cardEdgeCases',
+  assumptions: 'canvas.cardAssumptions',
+};
 
-// Al abrir el plugin, mandar a la UI el estado persistido de los toggles.
+figma.showUI(__html__, { width: 380, height: 660 });
+
+// Al abrir el plugin, mandar a la UI el estado persistido de los settings.
 Promise.all([
   figma.clientStorage.getAsync(CLAVE_DOCS),
   figma.clientStorage.getAsync(CLAVE_EDGE_CASES),
-]).then(([docs, edgeCases]) => {
+  figma.clientStorage.getAsync(CLAVE_IDIOMA),
+  figma.clientStorage.getAsync(CLAVE_DIRECCION),
+  figma.clientStorage.getAsync(CLAVE_REPETIR_FLOW),
+]).then(([docs, edgeCases, idioma, direccion, repetir]) => {
   figma.ui.postMessage({
     type: 'estado-inicial',
-    generarDocs: docs === undefined ? true : docs === true, // default: activado
-    separarEdgeCases: edgeCases === true,                    // default: desactivado
+    generarDocs: docs === undefined ? true : docs === true,        // default: activado
+    separarEdgeCases: edgeCases === true,                           // default: desactivado
+    lang: idioma === 'es' ? 'es' : 'en',                            // default: inglés
+    direccion: direccion === 'horizontal' ? 'horizontal' : 'vertical', // default: vertical
+    repetirFlow: repetir === true,                                  // default: desactivado
   });
 });
 
-async function generar(
-  markdown: string,
-  generarDocs: boolean,
-  separarEdgeCases: boolean,
-): Promise<{ resumen: string; warnings: string[] }> {
-  const { codigo, warnings } = extraerMermaid(markdown);
-  const grafo = parsearFlowchart(codigo);
-  if (grafo.nodos.size === 0) {
-    throw new Error('El bloque mermaid no tiene nodos reconocibles.');
+interface Opciones {
+  generarDocs: boolean;
+  separarEdgeCases: boolean;
+  direccion: Direccion;
+  repetirFlow: boolean;
+  lang: Idioma;
+  nombreArchivo?: string;
+}
+
+interface DiagramaListo {
+  grafo: Grafo;
+  flujoLabel: string;
+  offPath: Set<string>;
+  posiciones: Map<string, { x: number; y: number }>;
+  posicionesOffPath: Map<string, { x: number; y: number }>;
+}
+
+async function generar(markdown: string, o: Opciones): Promise<{ resumen: string; warnings: string[] }> {
+  const nombreFallback = o.nombreArchivo ? o.nombreArchivo.replace(/\.[^.]+$/, '') : undefined;
+  const doc = analizarDocumento(markdown, nombreFallback, o.lang);
+  const avisos = doc.avisos.slice();
+
+  // Parsear y calcular el layout de TODOS los diagramas detectados. Sin
+  // ninguno (o sin nodos reconocibles) se genera solo la documentación.
+  const diagramas: DiagramaListo[] = [];
+  for (const d of doc.diagramas) {
+    const grafo = parsearFlowchart(d.codigo, o.lang);
+    for (const w of grafo.warnings) avisos.push(w);
+    if (grafo.nodos.size === 0) {
+      avisos.push(t('aviso.diagramaSinNodos', o.lang));
+      continue;
+    }
+    // la dirección del mermaid se parsea pero manda el setting del panel
+    console.log(`[markdown-to-flow] dirección del mermaid: ${grafo.direccion}; se usa el setting del panel: ${o.direccion}`);
+    const offPath = new Set<string>();
+    if (o.separarEdgeCases) {
+      for (const nodo of grafo.nodos.values()) {
+        if (esOffPath(nodo)) offPath.add(nodo.id);
+      }
+    }
+    const posiciones = calcularLayout(grafo, offPath.size > 0 ? offPath : undefined, o.direccion);
+    const posicionesOffPath = offPath.size > 0
+      ? posicionarOffPath(grafo, offPath, posiciones, o.direccion)
+      : new Map<string, { x: number; y: number }>();
+    diagramas.push({ grafo, flujoLabel: d.flujo.label, offPath, posiciones, posicionesOffPath });
   }
-  const documentacion = generarDocs ? extraerDocumentacion(markdown) : null;
 
   // Todas las fuentes una sola vez, antes de crear cualquier texto.
   await Promise.all([
@@ -57,123 +120,224 @@ async function generar(
     figma.loadFontAsync(FUENTE_BOLD),
   ]);
 
-  // --- Layout: happy path, y columna off-path aparte si corresponde ---
-  const offPath = new Set<string>();
-  if (separarEdgeCases) {
-    for (const nodo of grafo.nodos.values()) {
-      if (esOffPath(nodo)) offPath.add(nodo.id);
+  const centro = figma.viewport.center;
+  const seccionesVisibles: SceneNode[] = [];
+  const partesResumen: string[] = [];
+
+  // sección "Flow" para la card repetida (solo con docs activo)
+  let seccionFlow: SeccionDetectada | null = null;
+  if (o.generarDocs) {
+    for (const s of doc.secciones) {
+      if (s.tipo === 'flow') { seccionFlow = s; break; }
     }
   }
-  const posiciones = calcularLayout(grafo, offPath.size > 0 ? offPath : undefined);
-  const posicionesOffPath = offPath.size > 0
-    ? posicionarOffPath(grafo, offPath, posiciones)
-    : new Map<string, { x: number; y: number }>();
-  const centro = figma.viewport.center;
+  // copia liviana de la card de Flow, pegada arriba del ancla que le pasen
+  const crearCardFlowRepetida = (ancla: SceneNode): SceneNode => {
+    const card = createSectionCard(seccionFlow!.titulo, seccionFlow!.bloques, 0, 0, o.lang);
+    card.rescale(ESCALA_CARD_FLOW);
+    card.x = ancla.x;
+    card.y = ancla.y - card.height - MARGEN_CARD_FLOW;
+    return card;
+  };
 
-  // Components maestro solo en Figma Design (en FigJam la API no los soporta:
-  // se usan ShapeWithText nativos, sin maestro). Van a la derecha de todo,
-  // después de la columna de edge cases si existe.
-  let comps: Record<Forma, ComponentNode> | null = null;
-  if (figma.editorType === 'figma') {
+  // Component Set una sola vez, a la derecha del máximo X global de todos los
+  // diagramas (solo Figma Design; en FigJam los nodos son ShapeWithText).
+  let comps: ComponentesBase | null = null;
+  if (figma.editorType === 'figma' && diagramas.length > 0) {
     let maxPX = 0;
-    for (const p of posiciones.values()) maxPX = Math.max(maxPX, p.x);
-    for (const p of posicionesOffPath.values()) maxPX = Math.max(maxPX, p.x);
+    for (const d of diagramas) {
+      for (const p of d.posiciones.values()) maxPX = Math.max(maxPX, p.x);
+      for (const p of d.posicionesOffPath.values()) maxPX = Math.max(maxPX, p.x);
+    }
     comps = createShapeComponents(centro.x + maxPX + 600, centro.y);
   }
 
-  // --- Nodos del diagrama ---
-  const nodosCreados = new Map<string, SceneNode>();
-  const nodosPrincipal: SceneNode[] = [];
-  const nodosEdgeCases: SceneNode[] = [];
-  const avisosEstilo = new Set<string>();
+  // --- Diagramas, apilados en orden de aparición ---
+  let totalNodos = 0;
+  let totalEdgeCases = 0;
+  let minXGlobal = Infinity;
+  let minYGlobal = Infinity;
+  let topeDiagrama = centro.y; // Y de la primera fila del próximo diagrama
 
-  for (const nodo of grafo.nodos.values()) {
-    const p = posiciones.get(nodo.id) || posicionesOffPath.get(nodo.id)!;
-    const { estilo, aviso } = resolverEstilo(nodo, grafo.classDefs);
-    if (aviso) avisosEstilo.add(aviso);
-    const creado = createDiagramNodeInstance(nodo.forma, nodo.texto, estilo, centro.x + p.x, centro.y + p.y, comps);
-    nodosCreados.set(nodo.id, creado);
-    if (offPath.has(nodo.id)) nodosEdgeCases.push(creado);
-    else nodosPrincipal.push(creado);
+  for (const d of diagramas) {
+    const { grafo, offPath, posiciones, posicionesOffPath } = d;
+    const nodosCreados = new Map<string, SceneNode>();
+    const nodosPrincipal: SceneNode[] = [];
+    const nodosEdgeCases: SceneNode[] = [];
+    const avisosEstilo = new Set<string>();
+
+    for (const nodo of grafo.nodos.values()) {
+      const p = posiciones.get(nodo.id) || posicionesOffPath.get(nodo.id)!;
+      const { estilo, aviso } = resolverEstilo(nodo, grafo.classDefs, o.lang);
+      if (aviso) avisosEstilo.add(aviso);
+      const creado = createDiagramNodeInstance(nodo.forma, nodo.texto, estilo, centro.x + p.x, topeDiagrama + p.y, comps);
+      nodosCreados.set(nodo.id, creado);
+      const grupo = offPath.has(nodo.id) ? nodosEdgeCases : nodosPrincipal;
+      grupo.push(creado);
+
+      // anotación de la leyenda de conectores, en cada aparición del nodo
+      if (nodo.forma === 'conector') {
+        const descripcion = doc.leyendaConectores[nodo.texto.toUpperCase()];
+        if (descripcion) {
+          const nota = crearAnotacionConector(`${nodo.texto} → ${descripcion}`, creado.x + creado.width + 8, 0);
+          nota.y = creado.y + (creado.height - nota.height) / 2;
+          grupo.push(nota);
+        }
+      }
+    }
+
+    // Conectores: los que tocan un nodo off-path van punteados y quedan a
+    // nivel de página (dentro de un Section estirarían su bounding box).
+    for (const edge of grafo.edges) {
+      const origen = nodosCreados.get(edge.origen);
+      const destino = nodosCreados.get(edge.destino);
+      if (!origen || !destino) continue;
+      const esOffPathEdge = offPath.has(edge.origen) || offPath.has(edge.destino);
+      const creados = await createConnectorLike(origen, destino, edge.label, esOffPathEdge, o.lang);
+      if (!esOffPathEdge) {
+        for (const c of creados) nodosPrincipal.push(c);
+      }
+    }
+
+    // título del flujo dentro del Section, antes del primer nodo; la card de
+    // Flow repetida (si aplica) se apila arriba del título
+    if (nodosPrincipal.length > 0) {
+      let ancla: SceneNode = nodosPrincipal[0];
+      const tituloFlujo = crearTituloFlujo(d.flujoLabel, ancla.x, 0);
+      tituloFlujo.y = ancla.y - tituloFlujo.height - MARGEN_CARD_FLOW;
+      nodosPrincipal.push(tituloFlujo);
+      ancla = tituloFlujo;
+      if (o.repetirFlow && o.generarDocs && seccionFlow) {
+        nodosPrincipal.push(crearCardFlowRepetida(ancla));
+      }
+    }
+    if (o.repetirFlow && o.generarDocs && seccionFlow && nodosEdgeCases.length > 0) {
+      nodosEdgeCases.push(crearCardFlowRepetida(nodosEdgeCases[0]));
+    }
+
+    for (const a of avisosEstilo) avisos.push(a);
+    totalNodos += grafo.nodos.size;
+    totalEdgeCases += offPath.size;
+
+    // bounds reales ANTES de armar los Sections (al reparentar, las
+    // coordenadas de los hijos pasan a ser relativas al Section)
+    let maxYAbs = -Infinity;
+    for (const grupo of [nodosPrincipal, nodosEdgeCases]) {
+      for (const n of grupo) {
+        if (n.type === 'CONNECTOR') continue;
+        minXGlobal = Math.min(minXGlobal, n.x);
+        minYGlobal = Math.min(minYGlobal, n.y);
+        maxYAbs = Math.max(maxYAbs, n.y + n.height);
+      }
+    }
+
+    // con un solo diagrama, el nombre del Section queda igual que siempre
+    const sufijo = diagramas.length > 1 ? ' — ' + d.flujoLabel : '';
+    seccionesVisibles.push(crearSection(t('canvas.seccionDiagrama', o.lang) + sufijo, nodosPrincipal));
+    if (nodosEdgeCases.length > 0) {
+      seccionesVisibles.push(crearSection(t('canvas.seccionEdgeCases', o.lang) + sufijo, nodosEdgeCases));
+    }
+
+    topeDiagrama = maxYAbs + SEPARACION_DIAGRAMAS;
   }
 
-  // --- Conectores: los que tocan un nodo off-path van punteados y quedan a
-  // nivel de página (si entraran a un Section, su bounding box se estiraría
-  // hasta pisar la otra columna) ---
-  for (const edge of grafo.edges) {
-    const origen = nodosCreados.get(edge.origen);
-    const destino = nodosCreados.get(edge.destino);
-    if (!origen || !destino) continue;
-    const esOffPathEdge = offPath.has(edge.origen) || offPath.has(edge.destino);
-    const creados = await createConnectorLike(origen, destino, edge.label, esOffPathEdge);
-    if (!esOffPathEdge) {
-      for (const c of creados) nodosPrincipal.push(c);
+  if (comps) {
+    // fuera del zoom a propósito: es zona de staging, no parte del resultado
+    crearSection(t('canvas.seccionComponentes', o.lang), [comps.set]);
+  }
+
+  // --- Status del diagrama y referencia para la columna de documentación ---
+  let cardX = centro.x - ANCHO_CARD / 2;
+  let cardY = centro.y;
+  if (diagramas.length > 0) {
+    partesResumen.push(t('status.diagramas', o.lang, { flows: diagramas.length, total: totalNodos }));
+    if (o.separarEdgeCases) {
+      if (totalEdgeCases > 0) {
+        partesResumen.push(t('status.edgeCases', o.lang, { count: totalEdgeCases }));
+      } else {
+        avisos.push(t('aviso.sinEdgeCases', o.lang));
+      }
     }
+    cardX = minXGlobal - MARGEN_COLUMNA - ANCHO_CARD;
+    cardY = minYGlobal;
+  } else {
+    partesResumen.push(t('status.sinDiagrama', o.lang));
+  }
+  if (o.repetirFlow && o.generarDocs && !seccionFlow) {
+    avisos.push(t('aviso.sinFlowParaRepetir', o.lang));
   }
 
   // --- Cards de documentación (solo con el toggle activo) ---
-  const cards: SceneNode[] = [];
-  if (documentacion) {
-    let minX = Infinity, minY = Infinity;
-    for (const n of nodosCreados.values()) {
-      minX = Math.min(minX, n.x);
-      minY = Math.min(minY, n.y);
-    }
-    let cardY = minY;
-    const cardX = minX - MARGEN_COLUMNA - ANCHO_CARD;
-    for (const card of documentacion.cards) {
-      const frame = createSectionCard(card.titulo, card.lineas, cardX, cardY);
-      cards.push(frame);
-      cardY += frame.height + SEPARACION_CARDS;
-    }
-  }
-
-  // --- Sections (al final, cuando ya están todas las posiciones absolutas) ---
-  const seccionesVisibles: SceneNode[] = [crearSection('Diagrama de flujo', nodosPrincipal)];
-  if (nodosEdgeCases.length > 0) {
-    seccionesVisibles.push(crearSection('Edge cases y errores', nodosEdgeCases));
-  }
-  if (cards.length > 0) {
-    seccionesVisibles.push(crearSection('Documentación', cards));
-  }
-  if (comps) {
-    // fuera del zoom a propósito: es zona de staging, no parte del resultado
-    crearSection('🧩 Componentes base', [comps.inicioFin, comps.proceso, comps.decision, comps.inputOutput]);
-  }
-  figma.viewport.scrollAndZoomIntoView(seccionesVisibles);
-
-  // --- Resumen para el status de la UI ---
-  let resumen = `Diagrama generado (${posiciones.size} nodos).`;
-  const avisos = warnings.concat(grafo.warnings, Array.from(avisosEstilo));
-  if (separarEdgeCases) {
-    if (nodosEdgeCases.length > 0) {
-      resumen += ` Edge cases separados (${nodosEdgeCases.length} nodos).`;
-    } else {
-      avisos.push('No hay nodos de edge case/error para separar (ninguna clase de ' +
-        'la lista off-path está asignada en el diagrama).');
-    }
-  }
-  if (!generarDocs) {
-    resumen += ' Documentación omitida (toggle desactivado).';
-  } else if (cards.length > 0) {
-    resumen += ` Documentación generada (${cards.length} cards).`;
+  if (!o.generarDocs) {
+    partesResumen.push(t('status.docsOmitida', o.lang));
+  } else if (doc.secciones.length === 0) {
+    avisos.push(t('aviso.sinSeccionesDocs', o.lang));
   } else {
-    avisos.push('No se encontraron secciones de documentación para generar cards.');
+    const cards: SceneNode[] = [];
+    for (const seccion of doc.secciones) {
+      const claveHeader = HEADERS_CONOCIDOS[seccion.tipo];
+      const base = claveHeader ? t(claveHeader, o.lang) : seccion.titulo;
+      // prefijo FLW0N — {header}; si la card ES el heading del flujo, va el label solo
+      let header = base;
+      if (seccion.flujo) {
+        header = seccion.titulo === seccion.flujo.heading
+          ? seccion.flujo.label
+          : `${seccion.flujo.label} — ${base}`;
+      }
+      const card = createSectionCard(header, seccion.bloques, cardX, cardY, o.lang);
+      cards.push(card);
+      cardY += card.height + SEPARACION_CARDS;
+    }
+    seccionesVisibles.push(crearSection(t('canvas.seccionDocs', o.lang), cards));
+
+    const conocidas = new Set(doc.secciones.filter((s) => s.tipo !== 'generica').map((s) => s.tipo));
+    const genericas = doc.secciones.filter((s) => s.tipo === 'generica');
+    const extra = genericas.length > 0
+      ? t('status.docsExtra', o.lang, { count: genericas.length, names: genericas.map((s) => `'${s.titulo}'`).join(', ') })
+      : '';
+    partesResumen.push(t('status.docs', o.lang, { known: conocidas.size, extra }));
   }
-  if (documentacion) {
-    for (const a of documentacion.avisos) avisos.push(a);
+
+  if (seccionesVisibles.length > 0) {
+    figma.viewport.scrollAndZoomIntoView(seccionesVisibles);
   }
-  return { resumen, warnings: avisos };
+  return { resumen: partesResumen.join(' '), warnings: avisos };
 }
 
-figma.ui.onmessage = async (msg: { type: string; markdown?: string; generarDocs?: boolean; separarEdgeCases?: boolean }) => {
+figma.ui.onmessage = async (msg: {
+  type: string;
+  markdown?: string;
+  generarDocs?: boolean;
+  separarEdgeCases?: boolean;
+  direccion?: string;
+  repetirFlow?: boolean;
+  lang?: string;
+  nombreArchivo?: string;
+}) => {
+  const lang: Idioma = msg.lang === 'es' ? 'es' : 'en';
+
+  // el idioma persiste apenas se cambia, aunque no se genere nada
+  if (msg.type === 'cambiar-idioma') {
+    figma.clientStorage.setAsync(CLAVE_IDIOMA, lang);
+    return;
+  }
   if (msg.type !== 'generar') return;
-  const generarDocs = msg.generarDocs === true;
-  const separarEdgeCases = msg.separarEdgeCases === true;
-  figma.clientStorage.setAsync(CLAVE_DOCS, generarDocs);           // persistir sin bloquear
-  figma.clientStorage.setAsync(CLAVE_EDGE_CASES, separarEdgeCases);
+
+  const opciones: Opciones = {
+    generarDocs: msg.generarDocs === true,
+    separarEdgeCases: msg.separarEdgeCases === true,
+    direccion: msg.direccion === 'horizontal' ? 'horizontal' : 'vertical',
+    repetirFlow: msg.repetirFlow === true,
+    lang,
+    nombreArchivo: msg.nombreArchivo,
+  };
+  figma.clientStorage.setAsync(CLAVE_DOCS, opciones.generarDocs); // persistir sin bloquear
+  figma.clientStorage.setAsync(CLAVE_EDGE_CASES, opciones.separarEdgeCases);
+  figma.clientStorage.setAsync(CLAVE_DIRECCION, opciones.direccion);
+  figma.clientStorage.setAsync(CLAVE_REPETIR_FLOW, opciones.repetirFlow);
+  figma.clientStorage.setAsync(CLAVE_IDIOMA, lang);
   try {
-    const { resumen, warnings } = await generar(msg.markdown || '', generarDocs, separarEdgeCases);
+    const { resumen, warnings } = await generar(msg.markdown || '', opciones);
     figma.ui.postMessage({ type: 'ok', resumen, warnings });
   } catch (e) {
     figma.ui.postMessage({ type: 'error', mensaje: e instanceof Error ? e.message : String(e) });

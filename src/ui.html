@@ -6,72 +6,176 @@
   body { font-family: Inter, sans-serif; font-size: 12px; margin: 16px; color: #333; }
   h2 { font-size: 14px; margin: 0 0 12px; }
   label { display: block; margin: 12px 0 4px; font-weight: 600; }
-  textarea { width: 100%; box-sizing: border-box; height: 160px; font-family: monospace; font-size: 11px; }
+  textarea { width: 100%; box-sizing: border-box; height: 150px; font-family: monospace; font-size: 11px; }
   .toggle { display: flex; align-items: flex-start; gap: 6px; margin: 14px 0 0; font-weight: 400; cursor: pointer; }
   .toggle input { margin: 2px 0 0; }
+  .idioma { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; }
+  .idioma label { margin: 0; }
   button { margin-top: 14px; padding: 8px 16px; background: #18a0fb; color: #fff; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; }
   button:hover { background: #0d8de3; }
   #status { margin-top: 12px; white-space: pre-wrap; }
   #status.error { color: #c33; }
+  .ayuda { margin: 4px 0 0; color: #777; }
 </style>
 </head>
 <body>
-  <h2>Markdown → Sticky notes</h2>
+  <!-- HTML estático en inglés (idioma default): la primera apertura con
+       storage limpio se ve en inglés sin re-render ni parpadeo -->
+  <h2 id="tituloPanel">Markdown → Flow diagram</h2>
 
-  <label for="archivo">Archivo .md de user flow</label>
-  <input type="file" id="archivo" accept=".md,.markdown,text/markdown">
+  <label for="archivo" id="labelArchivo">User flow file (.md, .markdown or .txt)</label>
+  <input type="file" id="archivo" accept=".md,.markdown,.txt">
+  <p class="ayuda" id="ayudaArchivo">An exact structure isn't required: the plugin will generate the best it can from whatever it finds.</p>
 
-  <label for="texto">…o pegá el markdown acá</label>
-  <textarea id="texto" placeholder="### Diagram&#10;&#10;```mermaid&#10;flowchart TD&#10;    A([Inicio]) --> B[Paso]&#10;```"></textarea>
+  <label for="texto" id="labelPegar">…or paste the content here</label>
+  <textarea id="texto" placeholder="flowchart TD&#10;    A([Start]) --> B[Step]"></textarea>
 
   <label class="toggle">
     <input type="checkbox" id="docs" checked>
-    <span>Generar también cards de documentación (steps, decisiones, assumptions, etc.)</span>
+    <span id="textoDocs">Also generate documentation cards (steps, decisions, assumptions, etc.)</span>
   </label>
 
   <label class="toggle">
     <input type="checkbox" id="edgeCases">
-    <span>Separar edge cases y errores en un flujo aparte</span>
+    <span id="textoEdgeCases">Separate edge cases and errors into their own flow</span>
   </label>
 
-  <button id="generar">Generar</button>
+  <label class="toggle">
+    <input type="checkbox" id="repetirFlow">
+    <span id="textoRepetirFlow">Repeat flow summary card at the start of each flow</span>
+  </label>
+
+  <div class="idioma">
+    <label for="direccion" id="labelDireccion">Flow direction</label>
+    <select id="direccion">
+      <option value="vertical" selected>Vertical</option>
+      <option value="horizontal">Horizontal</option>
+    </select>
+  </div>
+
+  <div class="idioma">
+    <label for="idioma" id="labelIdioma">Output language</label>
+    <select id="idioma">
+      <option value="en" selected>English</option>
+      <option value="es">Español</option>
+    </select>
+  </div>
+
+  <button id="generar">Generate</button>
   <div id="status"></div>
 
 <script>
+  // Copia local de las claves ui.* — mantener en sincronía con src/i18n.ts
+  // (el iframe no tiene bundler, no puede importar el diccionario TS).
+  const TEXTOS = {
+    en: {
+      tituloPanel: 'Markdown → Flow diagram',
+      labelArchivo: 'User flow file (.md, .markdown or .txt)',
+      ayudaArchivo: "An exact structure isn't required: the plugin will generate the best it can from whatever it finds.",
+      labelPegar: '…or paste the content here',
+      textoDocs: 'Also generate documentation cards (steps, decisions, assumptions, etc.)',
+      textoEdgeCases: 'Separate edge cases and errors into their own flow',
+      textoRepetirFlow: 'Repeat flow summary card at the start of each flow',
+      labelDireccion: 'Flow direction',
+      labelIdioma: 'Output language',
+      generar: 'Generate',
+      generando: 'Generating…',
+      archivoCargado: 'File loaded: ',
+      errorLectura: 'The file could not be read.',
+      errorBinario: "The file doesn't look like readable text (is it a binary like .docx or .rtf?). Convert it to plain text or markdown.",
+      errorVacio: 'No content to process: upload a file or paste the text.',
+      avisos: 'Warnings:',
+    },
+    es: {
+      tituloPanel: 'Markdown → Diagrama de flujo',
+      labelArchivo: 'Archivo de user flow (.md, .markdown o .txt)',
+      ayudaArchivo: 'No hace falta una estructura exacta: el plugin genera lo mejor posible con lo que encuentre.',
+      labelPegar: '…o pegá el contenido acá',
+      textoDocs: 'Generar también cards de documentación (steps, decisiones, assumptions, etc.)',
+      textoEdgeCases: 'Separar edge cases y errores en un flujo aparte',
+      textoRepetirFlow: 'Repetir la card de resumen del Flow al inicio de cada flujo',
+      labelDireccion: 'Dirección del flujo',
+      labelIdioma: 'Idioma de salida',
+      generar: 'Generar',
+      generando: 'Generando…',
+      archivoCargado: 'Archivo cargado: ',
+      errorLectura: 'No se pudo leer el archivo.',
+      errorBinario: 'El archivo no parece ser texto legible (¿es un binario como .docx o .rtf?). Convertilo a texto plano o markdown.',
+      errorVacio: 'No hay contenido para procesar: subí un archivo o pegá el texto.',
+      avisos: 'Avisos:',
+    },
+  };
+
   const archivo = document.getElementById('archivo');
   const texto = document.getElementById('texto');
   const docs = document.getElementById('docs');
   const edgeCases = document.getElementById('edgeCases');
+  const repetirFlow = document.getElementById('repetirFlow');
+  const selectorDireccion = document.getElementById('direccion');
+  const selectorIdioma = document.getElementById('idioma');
   const status = document.getElementById('status');
+
+  let idiomaActual = 'en';
+  let nombreArchivo = null;
+
+  function textos() { return TEXTOS[idiomaActual] || TEXTOS.en; }
+
+  function aplicarIdioma(lang) {
+    idiomaActual = lang;
+    const tx = textos();
+    for (const id of ['tituloPanel', 'labelArchivo', 'ayudaArchivo', 'labelPegar', 'textoDocs', 'textoEdgeCases', 'textoRepetirFlow', 'labelDireccion', 'labelIdioma']) {
+      document.getElementById(id).textContent = tx[id];
+    }
+    document.getElementById('generar').textContent = tx.generar;
+  }
 
   function mostrar(mensaje, esError) {
     status.textContent = mensaje;
     status.className = esError ? 'error' : '';
   }
 
+  selectorIdioma.onchange = () => {
+    aplicarIdioma(selectorIdioma.value);
+    parent.postMessage({ pluginMessage: { type: 'cambiar-idioma', lang: idiomaActual } }, '*');
+  };
+
   archivo.onchange = () => {
     const f = archivo.files[0];
     if (!f) return;
     const lector = new FileReader();
     lector.onload = () => {
-      texto.value = lector.result;
-      mostrar('Archivo cargado: ' + f.name);
+      const contenido = lector.result;
+      // binario (ej. .docx renombrado): null bytes o exceso de caracteres de reemplazo
+      const reemplazos = (contenido.match(/\uFFFD/g) || []).length;
+      if (contenido.indexOf('\u0000') !== -1 || reemplazos > contenido.length * 0.05) {
+        mostrar(textos().errorBinario, true);
+        return;
+      }
+      texto.value = contenido;
+      nombreArchivo = f.name;
+      mostrar(textos().archivoCargado + f.name);
     };
-    lector.onerror = () => mostrar('No se pudo leer el archivo.', true);
+    lector.onerror = () => mostrar(textos().errorLectura, true);
     lector.readAsText(f);
   };
 
+  texto.oninput = () => { nombreArchivo = null; }; // contenido editado a mano: ya no es "el archivo"
+
   document.getElementById('generar').onclick = () => {
     if (!texto.value.trim()) {
-      mostrar('No hay contenido markdown: subí un archivo o pegá el texto.', true);
+      mostrar(textos().errorVacio, true);
       return;
     }
-    mostrar('Generando…');
+    mostrar(textos().generando);
     parent.postMessage({ pluginMessage: {
       type: 'generar',
       markdown: texto.value,
       generarDocs: docs.checked,
       separarEdgeCases: edgeCases.checked,
+      repetirFlow: repetirFlow.checked,
+      direccion: selectorDireccion.value,
+      lang: idiomaActual,
+      nombreArchivo: nombreArchivo,
     } }, '*');
   };
 
@@ -79,10 +183,14 @@
     const msg = evento.data.pluginMessage;
     if (!msg) return;
     if (msg.type === 'estado-inicial') {
-      docs.checked = msg.generarDocs;             // toggles persistidos entre sesiones
+      docs.checked = msg.generarDocs;             // settings persistidos entre sesiones
       edgeCases.checked = msg.separarEdgeCases;
+      repetirFlow.checked = msg.repetirFlow;
+      selectorDireccion.value = msg.direccion;
+      selectorIdioma.value = msg.lang;
+      if (msg.lang !== idiomaActual) aplicarIdioma(msg.lang);
     } else if (msg.type === 'ok') {
-      mostrar(msg.resumen + (msg.warnings.length ? '\nAvisos:\n- ' + msg.warnings.join('\n- ') : ''));
+      mostrar(msg.resumen + (msg.warnings.length ? '\n' + textos().avisos + '\n- ' + msg.warnings.join('\n- ') : ''));
     } else if (msg.type === 'error') {
       mostrar('Error: ' + msg.mensaje, true);
     }

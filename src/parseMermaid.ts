@@ -1,11 +1,14 @@
 // Parser acotado de flowcharts Mermaid (flowchart TD / graph TD).
 // No usa la librería mermaid (esa renderiza SVG): acá solo extraemos el grafo
 // con regex línea por línea, tolerando lo que no reconocemos con un warning.
-// La localización de la sección "### Diagram" usa el parser genérico de parseMarkdown.ts.
+// La localización del bloque dentro del documento vive en parseMarkdown.ts
+// (analizarDocumento); acá solo se parsea el código mermaid ya extraído.
 
-import { partirEnSecciones, buscarSeccion } from './parseMarkdown.ts';
+import { t } from './i18n.ts';
+import type { Idioma } from './i18n.ts';
+import { normalizeLineBreaks } from './texto.ts';
 
-export type Forma = 'inicioFin' | 'proceso' | 'decision' | 'inputOutput';
+export type Forma = 'inicioFin' | 'proceso' | 'decision' | 'inputOutput' | 'conector';
 
 export interface Nodo {
   id: string;
@@ -66,40 +69,34 @@ export function hexARgb(hex: string): { r: number; g: number; b: number } | null
   };
 }
 
-// Localiza la sección "### Diagram" y devuelve el código del primer bloque mermaid.
-export function extraerMermaid(markdown: string): { codigo: string; warnings: string[] } {
-  const warnings: string[] = [];
+// Token de nodo en 3 partes independientes: id + chunk de forma + :::clase.
+// El id alcanza para registrar el edge; la forma se resuelve aparte, y si no
+// se reconoce cae a rectángulo con warning EN VEZ de perder la línea entera.
+const REGEX_TOKEN = /^([A-Za-z0-9_-]+)\s*(.*?)\s*(?::::([A-Za-z0-9_-]+))?$/;
 
-  const seccion = buscarSeccion(partirEnSecciones(markdown), 3, 'Diagram');
-  if (!seccion) {
-    throw new Error('El markdown no tiene una sección "### Diagram".');
-  }
-
-  const regexBloque = /```mermaid[^\n]*\n([\s\S]*?)```/g;
-  const bloques: string[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = regexBloque.exec(seccion.contenido)) !== null) bloques.push(m[1]);
-
-  if (bloques.length === 0) {
-    throw new Error('La sección "### Diagram" no contiene ningún bloque ```mermaid```.');
-  }
-  if (bloques.length > 1) {
-    warnings.push(`La sección "### Diagram" tiene ${bloques.length} bloques mermaid; se usa solo el primero.`);
-  }
-  return { codigo: bloques[0], warnings };
-}
-
-// Token de nodo: Id, Id([texto]), Id[/texto/], Id{texto}, Id[texto], con :::clase opcional.
-// El orden de las alternativas importa: "([" y "[/" se prueban antes que "[" genérico.
-const REGEX_NODO = /^([A-Za-z0-9_-]+)\s*(\(\[(.+)\]\)|\[\/(.+)\/\]|\{(.+)\}|\[(.+)\])?\s*(?::::([A-Za-z0-9_-]+))?$/;
+// Patrones de forma en orden (las sintaxis se contienen entre sí: "(((" antes
+// que "((" y "([", "{{" antes que "{", "[[" y "[(" antes que "[").
+// forma: null = sintaxis mermaid conocida pero no soportada → fallback a
+// rectángulo con el texto limpio del grupo capturado.
+const PATRONES_FORMA: { forma: Forma | null; regex: RegExp }[] = [
+  { forma: 'conector', regex: /^\(\(\((.+)\)\)\)$/ },  // círculo doble (junction)
+  { forma: 'conector', regex: /^\(\((.+)\)\)$/ },      // círculo simple: mismo junction (el triple va antes)
+  { forma: 'inicioFin', regex: /^\(\[(.+)\]\)$/ },
+  { forma: 'inputOutput', regex: /^\[\/(.+)\/\]$/ },
+  { forma: null, regex: /^\{\{(.+)\}\}$/ },            // hexágono
+  { forma: 'decision', regex: /^\{(.+)\}$/ },
+  { forma: null, regex: /^\[\[(.+)\]\]$/ },            // subrutina
+  { forma: null, regex: /^\[\((.+)\)\]$/ },            // base de datos
+  { forma: 'proceso', regex: /^\[(.+)\]$/ },
+];
 
 function limpiarTexto(texto: string): string {
-  const t = texto.trim();
-  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) return t.slice(1, -1);
-  return t;
+  let t = texto.trim();
+  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) t = t.slice(1, -1);
+  return normalizeLineBreaks(t);
 }
 
-export function parsearFlowchart(codigo: string): Grafo {
+export function parsearFlowchart(codigo: string, lang: Idioma = 'en'): Grafo {
   const grafo: Grafo = {
     direccion: 'TD',
     nodos: new Map(),
@@ -108,18 +105,45 @@ export function parsearFlowchart(codigo: string): Grafo {
     warnings: [],
   };
 
-  // Registra (o reusa) un nodo a partir de un token. Devuelve el id o null si no matchea.
+  // Registra (o reusa) un nodo a partir de un token. Devuelve el id o null si
+  // el token no tiene ni la pinta de un nodo (para eso el chunk de forma debe
+  // matchear un patrón conocido o al menos empezar con un delimitador de forma).
   function registrarNodo(token: string): string | null {
-    const m = token.trim().match(REGEX_NODO);
+    const m = token.trim().match(REGEX_TOKEN);
     if (!m) return null;
-    const [, id, , stadium, io, rombo, rect, clase] = m;
+    const [, id, chunk, clase] = m;
 
     let forma: Forma | null = null;
     let texto: string | null = null;
-    if (stadium !== undefined) { forma = 'inicioFin'; texto = stadium; }
-    else if (io !== undefined) { forma = 'inputOutput'; texto = io; }
-    else if (rombo !== undefined) { forma = 'decision'; texto = rombo; }
-    else if (rect !== undefined) { forma = 'proceso'; texto = rect; }
+    if (chunk) {
+      let reconocido = false;
+      for (const patron of PATRONES_FORMA) {
+        const f = chunk.match(patron.regex);
+        if (!f) continue;
+        reconocido = true;
+        texto = f[1];
+        if (patron.forma !== null) {
+          forma = patron.forma;
+        } else {
+          // sintaxis conocida pero no soportada → rectángulo + warning, sin perder el edge
+          forma = 'proceso';
+          const aviso = t('aviso.formaNoReconocida', lang, { id, forma: chunk });
+          grafo.warnings.push(aviso);
+          console.warn('[markdown-to-flow] ' + aviso);
+        }
+        break;
+      }
+      if (!reconocido) {
+        // catch-all: solo si parece una forma (empieza con delimitador);
+        // si no, el token no es un nodo y la línea se reporta como no reconocida
+        if (!/^[\[({]/.test(chunk)) return null;
+        forma = 'proceso';
+        texto = chunk;
+        const aviso = t('aviso.formaNoReconocida', lang, { id, forma: chunk });
+        grafo.warnings.push(aviso);
+        console.warn('[markdown-to-flow] ' + aviso);
+      }
+    }
 
     let nodo = grafo.nodos.get(id);
     if (!nodo) {
@@ -146,7 +170,8 @@ export function parsearFlowchart(codigo: string): Grafo {
         let label: string | undefined;
         const conLabel = seg.match(/^\|([^|]*)\|\s*([\s\S]*)$/);
         if (conLabel) {
-          label = conLabel[1].trim() || undefined;
+          const crudo = conLabel[1].trim();
+          label = crudo ? normalizeLineBreaks(crudo) : undefined;
           seg = conLabel[2].trim();
         }
         labels.push(label);
@@ -190,7 +215,7 @@ export function parsearFlowchart(codigo: string): Grafo {
       continue;
     }
 
-    const aviso = `Línea de mermaid no reconocida: "${linea}"`;
+    const aviso = t('aviso.lineaNoReconocida', lang, { linea });
     grafo.warnings.push(aviso);
     console.warn('[markdown-to-flow] ' + aviso);
   }

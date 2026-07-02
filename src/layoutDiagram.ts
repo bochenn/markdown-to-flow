@@ -17,6 +17,10 @@ export function esOffPath(nodo: Nodo): boolean {
 export const ESPACIADO_X = 400; // el preset más ancho (rombo largo) mide 320
 export const ESPACIADO_Y = 300; // el preset más alto (rombo largo) mide 200
 
+// Dirección elegida en el panel; tiene prioridad sobre la del mermaid.
+// vertical = niveles en filas (Y); horizontal = niveles en columnas (X).
+export type Direccion = 'vertical' | 'horizontal';
+
 export interface Posicion {
   x: number;
   y: number;
@@ -25,7 +29,7 @@ export interface Posicion {
 
 // `excluir` (opcional) saca nodos del cálculo como si no existieran: sus
 // aristas se ignoran, así el happy path no deja huecos donde estaban.
-export function calcularLayout(grafo: Grafo, excluir?: Set<string>): Map<string, Posicion> {
+export function calcularLayout(grafo: Grafo, excluir?: Set<string>, direccion: Direccion = 'vertical'): Map<string, Posicion> {
   const ids = Array.from(grafo.nodos.keys()).filter((id) => !excluir || !excluir.has(id));
   const salientes = new Map<string, string[]>();
   const entrantes = new Map<string, number>();
@@ -86,31 +90,35 @@ export function calcularLayout(grafo: Grafo, excluir?: Set<string>): Map<string,
   const posiciones = new Map<string, Posicion>();
   for (const [n, fila] of porNivel) {
     fila.forEach((id, i) => {
-      posiciones.set(id, {
-        x: (i - (fila.length - 1) / 2) * ESPACIADO_X,
-        y: n * ESPACIADO_Y,
-        nivel: n,
-      });
+      const cruzado = (i - (fila.length - 1) / 2); // distribución de la fila/columna
+      posiciones.set(id, direccion === 'vertical'
+        ? { x: cruzado * ESPACIADO_X, y: n * ESPACIADO_Y, nivel: n }
+        : { x: n * ESPACIADO_X, y: cruzado * ESPACIADO_Y, nivel: n });
     });
   }
   return posiciones;
 }
 
-export const SEPARACION_MIN_COLUMNA = 220;          // centro a centro, dentro de la columna off-path
+export const SEPARACION_MIN_COLUMNA = 220;          // centro a centro en Y (alturas ≤ 200)
+export const SEPARACION_MIN_FILA = 340;             // centro a centro en X (anchos ≤ 320)
 export const OFFSET_COLUMNA_OFFPATH = ESPACIADO_X + 150; // ≈250px de aire entre bordes reales
 
-// Ubica los nodos off-path en una columna a la derecha del flujo principal.
-// Cada uno hereda el Y del nodo principal que origina su rama (caminando hacia
-// atrás por predecesores off-path si es una cadena de errores); los
-// solapamientos se resuelven empujando hacia abajo lo mínimo necesario.
+// Ubica los nodos off-path fuera del flujo principal: columna a la derecha en
+// modo vertical, fila debajo en modo horizontal. Cada uno hereda la posición
+// (Y o X según dirección) del nodo principal que origina su rama (caminando
+// hacia atrás por predecesores off-path si es una cadena de errores); los
+// solapamientos se resuelven empujando lo mínimo necesario.
 export function posicionarOffPath(
   grafo: Grafo,
   offPath: Set<string>,
   principal: Map<string, Posicion>,
+  direccion: Direccion = 'vertical',
 ): Map<string, Posicion> {
-  let maxX = 0;
-  for (const p of principal.values()) maxX = Math.max(maxX, p.x);
-  const columnaX = maxX + OFFSET_COLUMNA_OFFPATH;
+  const vertical = direccion === 'vertical';
+  let maxEje = 0; // x en vertical (columna a la derecha), y en horizontal (fila debajo)
+  for (const p of principal.values()) maxEje = Math.max(maxEje, vertical ? p.x : p.y);
+  const posicionFija = maxEje + OFFSET_COLUMNA_OFFPATH;
+  const separacionMin = vertical ? SEPARACION_MIN_COLUMNA : SEPARACION_MIN_FILA;
 
   function origenPrincipal(id: string, visitados: Set<string>): string | null {
     if (visitados.has(id)) return null;
@@ -133,16 +141,19 @@ export function posicionarOffPath(
 
   const tentativos = ids.map((id) => {
     const origen = origenPrincipal(id, new Set());
-    return { id, y: origen ? principal.get(origen)!.y : 0 };
+    const pos = origen ? principal.get(origen)! : null;
+    return { id, valor: pos ? (vertical ? pos.y : pos.x) : 0 };
   });
-  tentativos.sort((a, b) => a.y - b.y || orden.get(a.id)! - orden.get(b.id)!);
+  tentativos.sort((a, b) => a.valor - b.valor || orden.get(a.id)! - orden.get(b.id)!);
 
   const posiciones = new Map<string, Posicion>();
-  let yAnterior = -Infinity;
+  let anterior = -Infinity;
   for (const t of tentativos) {
-    const y = Math.max(t.y, yAnterior + SEPARACION_MIN_COLUMNA);
-    posiciones.set(t.id, { x: columnaX, y, nivel: -1 }); // nivel -1 = fuera del happy path
-    yAnterior = y;
+    const valor = Math.max(t.valor, anterior + separacionMin);
+    posiciones.set(t.id, vertical
+      ? { x: posicionFija, y: valor, nivel: -1 }  // nivel -1 = fuera del happy path
+      : { x: valor, y: posicionFija, nivel: -1 });
+    anterior = valor;
   }
   return posiciones;
 }

@@ -1,0 +1,7 @@
+Notas sueltas de la reunion con el equipo de producto sobre el checkout de invitados. Quedamos en que el flujo de compra sin registro es prioridad para el Q3 porque el 40% de los carritos abandonados vienen de la pantalla de login.
+
+Maria propuso que el modal de autenticacion tenga tres opciones bien diferenciadas y que "continuar como invitado" sea la mas visible. Juan pidio validar con legal si podemos pedir el email antes del pago o si tiene que ser opcional hasta la confirmacion.
+
+Pendiente: definir que pasa con el carrito si el usuario cierra el navegador a mitad del checkout. La propuesta actual es conservarlo por cookie durante 7 dias, pero hay dudas de privacidad.
+
+Proxima reunion el jueves para revisar los wireframes del checkout invitado y el copy de los mensajes de error de pago.

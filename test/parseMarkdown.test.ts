@@ -7,10 +7,13 @@ import {
   buscarSeccion,
   contenidoALineas,
   construirNegritas,
-  extraerDocumentacion,
+  analizarDocumento,
 } from '../src/parseMarkdown.ts';
 
 const md = readFileSync(new URL('../Resources/user-flow-compra-jeans-invitado.md', import.meta.url), 'utf8');
+const txt = readFileSync(new URL('../Resources/user-flow-compra-jeans-invitado.txt', import.meta.url), 'utf8');
+const notas = readFileSync(new URL('../Resources/notas-sin-estructura.txt', import.meta.url), 'utf8');
+const edgeMd = readFileSync(new URL('../Resources/user-flow-compra-jeans-invitado_edge.md', import.meta.url), 'utf8');
 
 test('partirEnSecciones corta en headings y separadores ---', () => {
   const secciones = partirEnSecciones(md);
@@ -54,40 +57,204 @@ test('construirNegritas resuelve rangos y tolera ** sin cerrar', () => {
   assert.equal(roto.malCerrado, true);
 });
 
-test('extraerDocumentacion arma las 6 cards en orden con el archivo de ejemplo', () => {
-  const { cards, avisos } = extraerDocumentacion(md);
-  assert.equal(cards.length, 6);
-  assert.equal(avisos.length, 0);
+test('regression: el .md original produce las mismas 6 cards en orden vía analizarDocumento', () => {
+  const doc = analizarDocumento(md);
+  assert.equal(doc.estrategia, 'atx');
+  assert.equal(doc.diagramas.length, 1);
+  assert.ok(doc.diagramas[0].codigo.includes('flowchart TD'));
+  assert.equal(doc.diagramas[0].titulo, 'Diagram');
+  assert.equal(doc.avisos.length, 0);
+
+  const cards = doc.secciones;
+  assert.equal(cards.length, 6); // la sección Diagram queda vacía al remover el bloque y no genera card
+  assert.deepEqual(cards.map((c) => c.tipo), ['titulo', 'flow', 'steps', 'decision', 'edgeCases', 'assumptions']);
 
   assert.equal(cards[0].titulo, 'User Flow — Compra de jeans sin sesión iniciada');
   assert.equal(cards[0].lineas.length, 1); // el blockquote como subtítulo
   assert.ok(cards[0].lineas[0].texto.startsWith('Deliverable de interaction design'));
 
-  assert.ok(cards[1].titulo.startsWith('Flow:'));
-  assert.equal(cards[1].lineas.length, 6); // los 6 pares clave-valor
+  assert.equal(cards[1].lineas.length, 6); // los 6 pares clave-valor, sin doble marcado
   assert.ok(cards[1].lineas[0].texto.startsWith('• **Type:**'));
 
-  assert.equal(cards[2].titulo, 'Steps (happy path)');
   assert.equal(cards[2].lineas.length, 8);
   assert.ok(cards[2].lineas[0].texto.startsWith('1. **[User]**'));
 
-  assert.equal(cards[3].titulo, 'Decision points');
   assert.equal(cards[3].lineas.filter((l) => l.sangria === 0).length, 5); // D1–D5
   assert.equal(cards[3].lineas.filter((l) => l.sangria === 1).length, 11); // sub-bullets
 
-  assert.equal(cards[4].titulo, 'Alternate paths, errors, and edge cases');
   assert.equal(cards[4].lineas.length, 8);
-
-  assert.equal(cards[5].titulo, 'Assumptions and open questions');
   assert.equal(cards[5].lineas.length, 5);
   assert.ok(cards[5].lineas[0].texto.includes('**Validar con producto.**'));
 });
 
-test('secciones ausentes se omiten con aviso y las vacías generan card vacía', () => {
-  const minimo = '# Título\n\n> subtítulo\n\n---\n\n### Decision points\n\n---\n\n### Diagram\n\n```mermaid\nflowchart TD\n  A[uno]\n```\n';
-  const { cards, avisos } = extraerDocumentacion(minimo);
-  assert.equal(cards.length, 2); // Título + Decision points
-  assert.equal(avisos.length, 4); // Flow, Steps, Alternate, Assumptions
-  assert.equal(cards[1].titulo, 'Decision points');
-  assert.equal(cards[1].lineas.length, 0); // presente pero vacía
+test('sección conocida presente pero vacía genera card vacía; sin diagrama no es error', () => {
+  const minimo = '# Título\n\n> subtítulo\n\n---\n\n### Decision points\n';
+  const doc = analizarDocumento(minimo);
+  assert.equal(doc.diagramas.length, 0); // sin diagrama: resultado válido
+  assert.equal(doc.secciones.length, 2);
+  assert.equal(doc.secciones[1].tipo, 'decision');
+  assert.equal(doc.secciones[1].lineas.length, 0); // presente pero vacía → placeholder al renderizar
+});
+
+test('.txt con líneas etiqueta: mismas secciones y mismo diagrama que el .md', () => {
+  const doc = analizarDocumento(txt);
+  assert.equal(doc.estrategia, 'etiqueta');
+  assert.deepEqual(doc.secciones.map((s) => s.tipo), ['titulo', 'flow', 'steps', 'decision', 'edgeCases', 'assumptions']);
+
+  const flow = doc.secciones[1];
+  assert.equal(flow.lineas.length, 6);
+  assert.equal(flow.lineas[0].texto, '**Type:** user flow'); // clave-valor sin markdown → bold igual
+
+  assert.equal(doc.secciones[2].lineas.length, 8); // los 8 steps
+  assert.equal(doc.secciones[3].lineas.filter((l) => l.sangria === 1).length, 11);
+
+  // el bloque flowchart sin cercar se detecta igual (sin heading ATX cerca)
+  assert.equal(doc.diagramas.length, 1);
+  assert.equal(doc.diagramas[0].titulo, null);
+});
+
+test('texto plano sin estructura: una sola card con todo y sin diagrama', () => {
+  const doc = analizarDocumento(notas, 'notas-sin-estructura');
+  assert.equal(doc.estrategia, 'sin-estructura');
+  assert.equal(doc.diagramas.length, 0);
+  assert.equal(doc.secciones.length, 1);
+  assert.equal(doc.secciones[0].titulo, 'notas-sin-estructura');
+  assert.ok(doc.secciones[0].lineas.some((l) => l.texto.includes('checkout de invitados')));
+});
+
+test('_edge.md: 5 bloques mermaid sin heading "Diagram" → uno por bloque, con su heading', () => {
+  const doc = analizarDocumento(edgeMd);
+  assert.equal(doc.estrategia, 'atx');
+  assert.equal(doc.diagramas.length, 5); // ya no se descartan: uno por bloque
+  assert.equal(doc.avisos.length, 0);
+  assert.equal(doc.diagramas[0].titulo, '1. Flujo principal (happy path)');
+  assert.equal(doc.diagramas[1].titulo, '2. Flujo alterno — Autenticación durante el checkout');
+
+  assert.equal(doc.secciones[0].tipo, 'titulo');
+  assert.ok(doc.secciones.some((s) => s.tipo === 'generica' && s.titulo.includes('Convención visual')));
+  // ningún mermaid crudo quedó adentro de una card
+  for (const s of doc.secciones) {
+    for (const l of s.lineas) {
+      assert.ok(!l.texto.includes('-->'), `mermaid crudo en card "${s.titulo}"`);
+    }
+  }
+});
+
+test('flujos FLW0N: heading-con-diagrama, numeración limpiada y scope por niveles', () => {
+  const doc = analizarDocumento(edgeMd);
+  // 5 flujos, en orden, con la numeración inicial removida del título
+  assert.equal(doc.diagramas[0].flujo.id, 'FLW01');
+  assert.equal(doc.diagramas[0].flujo.titulo, 'Flujo principal (happy path)');
+  assert.equal(doc.diagramas[0].flujo.label, 'FLW01 - Flujo principal (happy path)');
+  assert.equal(doc.diagramas[4].flujo.id, 'FLW05');
+
+  // secciones globales (mismo nivel que los flujos o antes del primero): sin flujo
+  const porTitulo = new Map(doc.secciones.map((s) => [s.titulo, s]));
+  assert.equal(porTitulo.get('Convención visual (leyenda)')!.flujo, null);
+  assert.equal(porTitulo.get('Checklist de revisión aplicado')!.flujo, null);
+  // la sección que ES el heading del flujo lleva su propio flujo
+  const seccionFlujo1 = porTitulo.get('1. Flujo principal (happy path)');
+  if (seccionFlujo1) assert.equal(seccionFlujo1.flujo!.id, 'FLW01');
+});
+
+test('un solo flujo: todo el contenido pertenece a FLW01 (prefijo siempre)', () => {
+  const doc = analizarDocumento(md);
+  assert.equal(doc.diagramas[0].flujo.id, 'FLW01');
+  assert.equal(doc.diagramas[0].flujo.titulo, 'Diagram'); // el heading más cercano disponible
+  for (const s of doc.secciones) {
+    assert.equal(s.flujo!.id, 'FLW01');
+  }
+});
+
+test('leyenda de conectores: "`((ID))` → **Descripción**" parseada y limpiada', () => {
+  const doc = analizarDocumento(edgeMd);
+  assert.deepEqual(doc.leyendaConectores, {
+    CO: 'Checkout / opciones de autenticación',
+    PAY: 'Pantalla de pago',
+    REV: 'Revisión y confirmación del pedido',
+    OK: 'Confirmación de pedido',
+  });
+  // archivo sin leyenda → diccionario vacío, sin error
+  assert.deepEqual(analizarDocumento(md).leyendaConectores, {});
+});
+
+test('tablas markdown: parseadas a bloques con headers/filas, sin pipes en el texto', () => {
+  const doc = analizarDocumento(edgeMd);
+  const checklist = doc.secciones.find((s) => s.titulo === 'Checklist de revisión aplicado')!;
+  const tablas = checklist.bloques.filter((b) => b.tipo === 'tabla');
+  assert.equal(tablas.length, 1);
+  const tabla = tablas[0].tipo === 'tabla' ? tablas[0].tabla : null;
+  assert.deepEqual(tabla!.headers, ['Criterio', 'Estado', 'Cómo se cumple']);
+  assert.equal(tabla!.filas.length, 6);
+  assert.equal(tabla!.filas[0][0], 'Un objetivo por flujo');
+  // el texto plano de la card (lineas) ya no arrastra las filas con pipes
+  assert.ok(!checklist.lineas.some((l) => l.texto.includes('|---')));
+});
+
+test('tabla irregular: filas ajustadas al header con aviso; <br/> en celdas', () => {
+  const avisos: string[] = [];
+  const doc = analizarDocumento('### Checklist\n\n| A | B |\n|---|---|\n| solo una celda |\n| x<br/>y | z | extra |\n');
+  const tabla = doc.secciones[0].bloques.find((b) => b.tipo === 'tabla')!;
+  if (tabla.tipo !== 'tabla') throw new Error('no es tabla');
+  assert.deepEqual(tabla.tabla.filas[0], ['solo una celda', '']); // rellenada
+  assert.deepEqual(tabla.tabla.filas[1], ['x\ny', 'z']);          // truncada + <br/> normalizado
+  assert.equal(doc.avisos.filter((a) => a.includes('column')).length, 2);
+});
+
+test('bullets con patrón CA se convierten en tabla de 3 columnas', () => {
+  const doc = analizarDocumento(edgeMd);
+  const cobertura = doc.secciones.find((s) => s.titulo === 'Cobertura de criterios de aceptación')!;
+  const tabla = cobertura.bloques.find((b) => b.tipo === 'tabla')!;
+  if (tabla.tipo !== 'tabla') throw new Error('no es tabla');
+  assert.deepEqual(tabla.tabla.headers, ['CA', 'Description', 'Reference']); // idioma default: en
+  assert.equal(tabla.tabla.filas.length, 6);
+  assert.deepEqual(tabla.tabla.filas[0], ['CA1', 'invitado inicia compra', 'Flujo 1, nodos K–L']);
+
+  // bullet que no matchea → fila cruda + aviso, sin descartar la tabla
+  const conRaro = analizarDocumento('### Cobertura\n\n- **CA1** (a) → r1\n- **CA2** (b) -> r2\n- bullet raro\n');
+  const t2 = conRaro.secciones[0].bloques.find((b) => b.tipo === 'tabla')!;
+  if (t2.tipo !== 'tabla') throw new Error('no es tabla');
+  assert.equal(t2.tabla.filas.length, 3);
+  assert.deepEqual(t2.tabla.filas[2], ['bullet raro', '', '']);
+  assert.equal(conRaro.avisos.length, 1);
+});
+
+test('regression: secciones sin tablas tienen un único bloque de texto igual a lineas', () => {
+  const doc = analizarDocumento(md);
+  for (const s of doc.secciones) {
+    assert.ok(s.bloques.every((b) => b.tipo === 'texto'));
+    assert.deepEqual(s.lineas, s.bloques.length === 1 && s.bloques[0].tipo === 'texto' ? s.bloques[0].lineas : s.lineas);
+  }
+});
+
+test('diagrama sin cercar y sin headings: diagrama + una card genérica con el resto', () => {
+  const doc = analizarDocumento('Notas previas de contexto\n\nflowchart TD\nA[a] --> B[b]\n');
+  assert.equal(doc.estrategia, 'sin-estructura');
+  assert.equal(doc.diagramas.length, 1);
+  assert.ok(doc.diagramas[0].codigo.includes('A[a]'));
+  assert.equal(doc.diagramas[0].titulo, null);
+  assert.equal(doc.secciones.length, 1);
+  assert.equal(doc.secciones[0].titulo, 'Content'); // idioma default: inglés
+  assert.equal(doc.secciones[0].lineas[0].texto, 'Notas previas de contexto');
+
+  const docEs = analizarDocumento('solo texto\n', undefined, 'es');
+  assert.equal(docEs.secciones[0].titulo, 'Contenido');
+});
+
+test('headings Setext: se detectan como estrategia propia', () => {
+  const doc = analizarDocumento('Mi flujo\n========\n\nintro\n\n---\n\nSteps del proceso\n-----------------\n\n1. paso uno\n');
+  assert.equal(doc.estrategia, 'setext');
+  assert.equal(doc.secciones.length, 2);
+  assert.equal(doc.secciones[0].tipo, 'titulo');
+  assert.deepEqual(doc.secciones[0].lineas, [{ sangria: 0, texto: 'intro' }]);
+  assert.equal(doc.secciones[1].tipo, 'steps');
+  assert.deepEqual(doc.secciones[1].lineas, [{ sangria: 0, texto: '1. paso uno' }]);
+});
+
+test('varios bloques mermaid cercados: usa el primero y avisa', () => {
+  const doc = analizarDocumento('```mermaid\nflowchart TD\nA[uno]\n```\n\ntexto suelto\n\n```mermaid\nflowchart TD\nB[dos]\n```\n');
+  assert.equal(doc.diagramas.length, 2); // ambos bloques, en orden
+  assert.ok(doc.diagramas[0].codigo.includes('A[uno]'));
+  assert.equal(doc.avisos.length, 0);
+  assert.equal(doc.secciones.length, 1); // el texto restante, como card única
 });

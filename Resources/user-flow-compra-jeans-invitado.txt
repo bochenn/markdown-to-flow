@@ -1,0 +1,89 @@
+USER FLOW — COMPRA DE JEANS SIN SESION INICIADA
+
+Deliverable de interaction design generado a partir de la User Story "Compra de jeans como usuario no autenticado". Producido con el metodo de user flows (steps, system responses y decision branches).
+
+FLOW: COMPRA COMO INVITADO
+
+Type: user flow
+Actor: Usuario no autenticado (visitante del ecommerce de moda)
+Goal: Recibir la confirmacion de un pedido de jeans pagado, sin verse obligado a registrarse antes de pagar
+Trigger (entry): El usuario entra al website y navega a la categoria de jeans
+Preconditions: Ninguna obligatoria. El usuario no tiene sesion iniciada. Debe existir stock del producto y talla elegidos.
+Success (exit): Se muestra la pagina de confirmacion con numero de pedido y se envia el email de confirmacion
+
+STEPS (HAPPY PATH):
+
+1. [User] Navega a la seccion de jeans y filtra por talla/color/corte/precio -> [System] Muestra el listado de productos -> (Pantalla: Listado de jeans)
+2. [User] Abre la pagina de detalle de unos jeans -> [System] Muestra imagenes, precio, descripcion, disponibilidad, tallas y opciones de entrega -> (Pantalla: Detalle de producto)
+3. [User] Selecciona una talla disponible y hace clic en "Anadir al carrito" -> [System] Valida stock y confirma que el producto fue anadido -> (Pantalla: Detalle + confirmacion de anadido)
+4. [User] Va al carrito y hace clic en "Finalizar compra" -> [System] Detecta que no hay sesion iniciada y conserva el carrito -> (Pantalla: Carrito)
+5. [System] Muestra las opciones de autenticacion: Iniciar sesion / Crear cuenta / Continuar como invitado -> (Pantalla: Modal de checkout)
+6. [User] Elige "Continuar como invitado" e introduce datos de contacto, direccion de entrega y metodo de envio -> [System] Valida los datos y mantiene el carrito intacto -> (Pantalla: Checkout invitado)
+7. [User] Introduce el metodo de pago, revisa el resumen del pedido, acepta terminos y hace clic en "Comprar ahora" -> [System] Valida el pago -> (Pantalla: Resumen y pago)
+8. [System] Genera el numero de pedido, muestra la pantalla de confirmacion y envia el email de confirmacion -> (Pantalla: Confirmacion de pedido)
+
+DECISION POINTS:
+
+- D1: El usuario tiene sesion iniciada al pulsar "Finalizar compra"?
+  - Si -> salta directamente al paso 7
+  - No -> paso 5 (mostrar opciones de autenticacion / invitado)
+- D2: Que opcion de checkout elige el usuario?
+  - Continuar como invitado -> paso 6
+  - Iniciar sesion -> sub-flujo de login; al autenticarse, continuar checkout -> paso 7
+  - Crear cuenta -> sub-flujo de registro; al registrarse, continuar checkout -> paso 7
+- D3: El login es correcto?
+  - Si -> paso 7 (carrito conservado)
+  - No -> mostrar error de credenciales y permitir reintento
+- D4: Los datos de contacto/direccion/envio son validos?
+  - Si -> continuar a pago
+  - No -> error inline en los campos afectados y volver al paso 6
+- D5: El pago fue aprobado?
+  - Si -> paso 8 (generar pedido, confirmacion y email)
+  - No -> mostrar error de pago, conservar los datos y permitir reintentar
+
+EDGE CASES Y ERRORES:
+
+- Carrito conservado: en el paso 5 y durante todo el checkout el sistema mantiene producto, talla, cantidad y precio.
+- Producto/talla sin stock: en el paso 3, si la talla se agota, mostrar aviso y sugerir tallas alternativas.
+- Error de validacion de formulario: email invalido, campos vacios o direccion incompleta -> error inline.
+- Pago rechazado o error de red: mostrar mensaje claro, preservar datos y ofrecer reintento.
+- Registro post-compra opcional: tras la confirmacion, ofrecer crear una cuenta sin bloquear.
+
+ASSUMPTIONS Y PREGUNTAS ABIERTAS:
+
+- Se asume que las opciones de autenticacion se presentan en un modal dentro del checkout. Validar con producto.
+- Se asume que el carrito se conserva mediante sesion de invitado/cookie. Confirmar duracion de persistencia.
+- Se asume validacion de stock al anadir al carrito y antes de confirmar el pago. Confirmar si hay reserva temporal.
+- El registro post-compra es opcional y no debe bloquear la confirmacion.
+- No se detalla el sub-flujo de recuperacion de contrasena. Definir si aplica en este alcance.
+
+flowchart TD
+    A([Inicio: usuario entra al website]) --> B[Navega y filtra jeans]
+    B --> C[Abre detalle del producto]
+    C --> D[Selecciona talla y Anade al carrito]
+    D --> E{Stock disponible?}
+    E -->|No| F[Aviso sin stock + sugerir tallas]:::error
+    F --> C
+    E -->|Si| G[Va al carrito y pulsa Finalizar compra]
+    G --> H{Sesion iniciada?}
+    H -->|Si| P[Introduce/confirma pago y resumen]
+    H -->|No| I[/Opciones: Iniciar sesion / Crear cuenta / Invitado/]
+    I -->|Iniciar sesion| J[/Login/]
+    J --> K{Login correcto?}
+    K -->|No| L[Error de credenciales + reintento]:::error
+    L --> I
+    K -->|Si| P
+    I -->|Crear cuenta| M[/Registro/]
+    M --> P
+    I -->|Continuar como invitado| N[Datos de contacto, direccion y envio]
+    N --> O{Datos validos?}
+    O -->|No| Q[Error inline en campos]:::error
+    Q --> N
+    O -->|Si| P
+    P --> R{Pago aprobado?}
+    R -->|No| S[Error de pago + conservar datos + reintento]:::error
+    S --> P
+    R -->|Si| T[Genera pedido y muestra confirmacion]
+    T --> U[Envia email de confirmacion]
+    U --> V([Fin: pedido confirmado])
+    classDef error fill:#fde,stroke:#c33,color:#900;
