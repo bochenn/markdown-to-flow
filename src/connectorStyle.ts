@@ -11,10 +11,22 @@
 // Design es recta a propósito. Se igualan color, grosor y punta (V abierta
 // de líneas, strokeCap ARROW_LINES — la misma familia que usa FigJam).
 
+// Color único para TODOS los conectores (#874FFF), en ambos editores —
+// override intencional sobre el default. Los edge cases se distinguen solo
+// por el punteado (dashPattern), no por color.
 export const ESTILO_CONECTOR = {
-  color: { r: 0, g: 0, b: 0 },
+  color: { r: 135 / 255, g: 79 / 255, b: 1 }, // #874FFF
   strokeWeight: 2,
 };
 
-// Override explícito para los conectores off-path (edge cases): gris tenue.
-export const COLOR_CONECTOR_OFFPATH = { r: 0.62, g: 0.62, b: 0.62 };
+// El default real de figma.createConnector() NO es elbowed: se fuerza
+// connectorLineType = 'ELBOWED' explícito. El cornerRadius del conector
+// nativo es readonly en la API (el redondeo del codo lo dibuja FigJam);
+// estos valores aplican al trazado simulado de Figma Design.
+export const RADIO_CODO = 8;      // radio de esquina de los codos simulados
+export const DESVIO_RETORNO = 60; // cuánto rodea por la derecha un back-edge
+
+// Desvío por carril lateral cuando un conector cruzaría otros nodos.
+export const MARGEN_OBSTACULO = 24;  // separación de las bandas respecto de los nodos
+export const MARGEN_CARRIL = 40;     // distancia del carril al borde del diagrama
+export const SEPARACION_CARRIL = 24; // corrimiento entre tramos que comparten franja (mayor que el alto del badge: 22px)

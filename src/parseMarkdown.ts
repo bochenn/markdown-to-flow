@@ -235,6 +235,49 @@ export function construirNegritas(texto: string): {
   return { texto: plano, rangos, malCerrado: false };
 }
 
+// Texto rico completo: **negrita** + `código inline` (los backticks NO son un
+// bug de encoding — son sintaxis markdown sin parsear). Los backticks se
+// quitan del resultado y el rango queda marcado para fuente monoespaciada;
+// un backtick sin cerrar deja la línea como texto plano. Soporta el combo
+// **`texto`** (ambos formatos sobre el mismo rango).
+export function construirRico(texto: string): {
+  texto: string;
+  negritas: { inicio: number; fin: number }[];
+  codigo: { inicio: number; fin: number }[];
+  malCerrado: boolean;
+} {
+  const negrita = construirNegritas(texto);
+  const plano1 = negrita.texto;
+  const partes = plano1.split('`');
+  if (partes.length % 2 === 0) {
+    // backtick sin cerrar → texto plano, sin romper el resto de la línea
+    return { texto: plano1, negritas: negrita.rangos, codigo: [], malCerrado: negrita.malCerrado };
+  }
+  let plano2 = '';
+  const codigo: { inicio: number; fin: number }[] = [];
+  const cortes: number[] = []; // posiciones (en plano1) de los backticks removidos
+  let pos1 = 0;
+  for (let i = 0; i < partes.length; i++) {
+    if (i % 2 === 1) {
+      cortes.push(pos1 - 1); // backtick de apertura
+      if (partes[i].length > 0) {
+        codigo.push({ inicio: plano2.length, fin: plano2.length + partes[i].length });
+      }
+      cortes.push(pos1 + partes[i].length); // backtick de cierre
+    }
+    plano2 += partes[i];
+    pos1 += partes[i].length + 1;
+  }
+  // remapear los rangos de negrita restando los backticks removidos antes de cada offset
+  const remap = (p: number) => p - cortes.filter((c) => c < p).length;
+  return {
+    texto: plano2,
+    negritas: negrita.rangos.map((r) => ({ inicio: remap(r.inicio), fin: remap(r.fin) })),
+    codigo,
+    malCerrado: negrita.malCerrado,
+  };
+}
+
 // ============================================================================
 // Análisis tolerante del documento completo: detecta el diagrama en cualquier
 // parte del archivo y las secciones con la estrategia que funcione (cascada
@@ -310,7 +353,7 @@ function extraerLeyendaConectores(restante: string): Record<string, string> {
   const leyenda: Record<string, string> = {};
   for (const linea of restante.split(/\r?\n/)) {
     const m = linea.match(/\({2,3}\s*([A-Za-z0-9_-]+)\s*\){2,3}`?\s*(?:→|->|=>)\s*(.+)$/);
-    if (m) leyenda[m[1].toUpperCase()] = m[2].replace(/\*\*/g, '').trim();
+    if (m) leyenda[m[1].toUpperCase()] = m[2].replace(/\*\*/g, '').replace(/`/g, '').trim();
   }
   return leyenda;
 }
@@ -474,16 +517,22 @@ function clasificarSecciones(
   // nivel igual o superior (ej. un "Checklist" al final queda global)
   let flujoActual: { flujo: FlujoInfo; nivel: number } | null = null;
   for (const s of secciones) {
+    const flujoPropio = flujosPorHeading.get(s.titulo) || null;
     let tipo: TipoSeccion;
     if (!tituloAsignado && s.nivel === nivelMin) {
       tipo = 'titulo'; // el primer heading del nivel más alto es el título del documento
       tituloAsignado = true;
+    } else if (flujoPropio) {
+      // el heading de un flujo es la card descriptiva de ESE flujo, no una
+      // sección conocida — palabras como "edge cases"/"errores" en el título
+      // del flujo no deben matchear los alias (bug: FLW03-05 clasificados
+      // como "Alternate paths" y perdidos del status)
+      tipo = 'generica';
     } else {
       tipo = clasificarTitulo(s.titulo);
     }
 
     let flujo: FlujoInfo | null = null;
-    const flujoPropio = flujosPorHeading.get(s.titulo) || null;
     if (unicoFlujo) {
       flujo = unicoFlujo; // un solo flujo: todo el contenido le pertenece
     } else if (flujoPropio) {
@@ -503,6 +552,13 @@ function clasificarSecciones(
     resultado.push({ tipo, titulo: s.titulo, lineas: lineasDeBloques(bloques), bloques, flujo });
   }
   return resultado;
+}
+
+// ¿La sección sirve de resumen de Flow? Formato clásico (tipo 'flow') o el
+// alternativo: metadatos como texto corrido bajo el H1 ("**User story:** ...").
+export function esResumenFlow(seccion: SeccionDetectada): boolean {
+  if (seccion.tipo === 'flow') return true;
+  return seccion.lineas.filter((l) => /^(?:•\s*)?\*\*[^*]+:\*\*\s/.test(l.texto)).length >= 2;
 }
 
 export function analizarDocumento(texto: string, nombreFallback?: string, lang: Idioma = 'en'): DocumentoAnalizado {

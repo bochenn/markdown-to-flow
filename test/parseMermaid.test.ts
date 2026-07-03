@@ -4,7 +4,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parsearFlowchart, hexARgb } from '../src/parseMermaid.ts';
 import { calcularLayout, posicionarOffPath, esOffPath, SEPARACION_MIN_COLUMNA, SEPARACION_MIN_FILA } from '../src/layoutDiagram.ts';
-import { resolverEstilo } from '../src/renderFigma.ts';
+import {
+  resolverEstilo,
+  rutaElbow,
+  puntoMedioRuta,
+  pathElbow,
+  segmentoCruzaCaja,
+  crearContextoRuteo,
+  rutaEvitandoObstaculos,
+} from '../src/renderFigma.ts';
 import { analizarDocumento } from '../src/parseMarkdown.ts';
 
 const md = readFileSync(new URL('../Resources/user-flow-compra-jeans-invitado.md', import.meta.url), 'utf8');
@@ -164,6 +172,147 @@ test('resolverEstilo aplica el classDef y avisa si la clase no existe', () => {
   const claseInexistente = parsearFlowchart('flowchart TD\nA[uno]:::fantasma\n');
   const resultado = resolverEstilo(claseInexistente.nodos.get('A')!, claseInexistente.classDefs);
   assert.ok(resultado.aviso !== null && resultado.aviso.includes('fantasma'));
+});
+
+test('rutaElbow: recta si están alineados, Z si hay desplazamiento, rodeo en retornos', () => {
+  const a = { x: 0, y: 0, width: 100, height: 50 };
+
+  // alineados verticalmente → recta simple, sin codo artificial
+  const alineado = rutaElbow(a, { x: 0, y: 150, width: 100, height: 50 });
+  assert.equal(alineado.length, 2);
+  assert.deepEqual(alineado[0], { x: 50, y: 50 });
+
+  // desplazado → Z de 4 puntos con tramo horizontal a mitad de camino
+  const z = rutaElbow(a, { x: 200, y: 150, width: 100, height: 50 });
+  assert.equal(z.length, 4);
+  assert.deepEqual(z[0], { x: 50, y: 50 });    // sale por abajo del origen
+  assert.deepEqual(z[3], { x: 250, y: 150 });  // entra por arriba del destino
+  assert.equal(z[1].y, z[2].y);                // codo horizontal
+  assert.equal(z[1].y, 100);                   // a mitad del hueco vertical
+
+  // retorno (destino arriba) → rodea por la derecha, sin atravesar la columna
+  const retorno = rutaElbow(a, { x: 0, y: -200, width: 100, height: 50 });
+  assert.equal(retorno.length, 4);
+  assert.equal(retorno[0].x, 100);             // sale por el borde derecho
+  assert.ok(retorno[1].x >= 100 + 60);         // desvío más allá de las formas
+  assert.equal(retorno[1].x, retorno[2].x);    // tramo vertical del rodeo
+});
+
+test('pathElbow redondea codos con radio adaptativo; puntoMedioRuta camina el recorrido', () => {
+  const puntos = [{ x: 0, y: 0 }, { x: 0, y: 100 }, { x: 200, y: 100 }];
+  const d = pathElbow(puntos, 8);
+  assert.ok(d.includes('Q 0 100'), 'curva en el codo');
+  assert.ok(d.startsWith('M 0 0 L 0 92'), 'corta el radio antes del codo');
+
+  // tramo corto (10px): el radio se reduce a la mitad del tramo
+  const corto = pathElbow([{ x: 0, y: 0 }, { x: 0, y: 10 }, { x: 200, y: 10 }], 8);
+  assert.ok(corto.includes('L 0 5 Q 0 10 5 10'));
+
+  // largo total 300 → la mitad (150) cae 50px adentro del tramo horizontal
+  assert.deepEqual(puntoMedioRuta(puntos), { x: 50, y: 100 });
+});
+
+test('rutaEvitandoObstaculos: sin cruce queda la default; con cruce desvía por carril', () => {
+  const origen = { x: 400, y: 0, width: 100, height: 50 };
+  const destino = { x: 0, y: 300, width: 100, height: 50 };
+  const enMedio = { x: 150, y: 125, width: 100, height: 50 }; // pisa el tramo horizontal de la Z default
+
+  // sin contexto o sin colisión → exactamente la ruta default (regression de adyacentes)
+  assert.equal(rutaEvitandoObstaculos(origen, destino).lado, null);
+  const lejano = crearContextoRuteo([origen, destino, { x: 2000, y: 2000, width: 50, height: 50 }]);
+  const sinCruce = rutaEvitandoObstaculos(origen, destino, lejano);
+  assert.equal(sinCruce.lado, null);
+  assert.deepEqual(sinCruce.puntos, rutaElbow(origen, destino));
+
+  // con un nodo en el medio → desvío de 6 puntos por el carril
+  const ctx = crearContextoRuteo([origen, destino, enMedio]);
+  const ruta = rutaEvitandoObstaculos(origen, destino, ctx);
+  assert.ok(ruta.lado !== null);
+  assert.equal(ruta.puntos.length, 6);
+  // criterio programático de aceptación: la ruta final no cruza el obstáculo
+  for (let i = 1; i < ruta.puntos.length; i++) {
+    assert.ok(
+      !segmentoCruzaCaja(ruta.puntos[i - 1], ruta.puntos[i], enMedio, 4),
+      `el tramo ${i} cruza el obstáculo`,
+    );
+  }
+  // el carril queda fuera del diagrama
+  const xCarril = ruta.puntos[2].x;
+  assert.ok(xCarril > 500 || xCarril < 0);
+
+  // segundo conector: o comparte carril corrido 24px (con la banda separada),
+  // o directamente elige el carril opuesto ahora que evalúa ambos lados
+  const ruta2 = rutaEvitandoObstaculos(origen, destino, ctx);
+  assert.ok(ruta2.lado !== null);
+  if (ruta2.lado === ruta.lado) {
+    assert.equal(Math.abs(ruta2.puntos[2].x - xCarril), 24);
+    assert.ok(Math.abs(ruta2.puntos[1].y - ruta.puntos[1].y) >= 20, 'la banda de salida debe separarse');
+  } else {
+    assert.notEqual(Math.sign(ruta2.puntos[2].x - 250), Math.sign(xCarril - 250)); // carriles opuestos
+  }
+
+  // ruta default (sin desvío) que pisa la franja de otra: también se corre
+  const solos = crearContextoRuteo([origen, destino]);
+  const primera = rutaEvitandoObstaculos(origen, destino, solos);
+  const segunda = rutaEvitandoObstaculos(origen, destino, solos);
+  assert.ok(Math.abs(segunda.puntos[1].y - primera.puntos[1].y) >= 20);
+  // y un conector solo en su franja queda exactamente como la ruta elbow default
+  const unico = crearContextoRuteo([origen, destino]);
+  assert.deepEqual(rutaEvitandoObstaculos(origen, destino, unico).puntos, rutaElbow(origen, destino));
+});
+
+test('barycenter: FLW03 (flujo denso) queda sin cruces de conectores', () => {
+  const flw03 = analizarDocumento(edgeMd).diagramas[2];
+  const grafo = parsearFlowchart(flw03.codigo);
+  const posiciones = calcularLayout(grafo);
+
+  // cuenta cruces entre aristas rectas centro a centro (sin extremos compartidos)
+  const orientacion = (p: {x:number;y:number}, q: {x:number;y:number}, r: {x:number;y:number}) =>
+    Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+  const segmentos = grafo.edges
+    .filter((e) => posiciones.has(e.origen) && posiciones.has(e.destino))
+    .map((e) => ({ a: posiciones.get(e.origen)!, b: posiciones.get(e.destino)!, e }));
+  let cruces = 0;
+  for (let i = 0; i < segmentos.length; i++) {
+    for (let j = i + 1; j < segmentos.length; j++) {
+      const s = segmentos[i], t = segmentos[j];
+      if (s.e.origen === t.e.origen || s.e.origen === t.e.destino || s.e.destino === t.e.origen || s.e.destino === t.e.destino) continue;
+      if (orientacion(s.a, s.b, t.a) !== orientacion(s.a, s.b, t.b)
+        && orientacion(t.a, t.b, s.a) !== orientacion(t.a, t.b, s.b)) cruces++;
+    }
+  }
+  assert.equal(cruces, 0); // el layout anterior tenía 7
+});
+
+test('ruta recta que pisa una franja ocupada se convierte en U-jog corrido', () => {
+  const a = { x: 0, y: 0, width: 100, height: 50 };
+  const b = { x: 400, y: 0, width: 100, height: 50 };
+  const ctx = crearContextoRuteo([a, b]);
+  const primera = rutaEvitandoObstaculos(a, b, ctx);
+  assert.equal(primera.puntos.length, 2); // recta simple, registra su franja
+  const segunda = rutaEvitandoObstaculos(a, b, ctx);
+  assert.equal(segunda.puntos.length, 6); // U-jog con la banda corrida
+  assert.ok(Math.abs(segunda.puntos[2].y - primera.puntos[0].y) >= 20, 'la banda del jog debe separarse de la recta');
+});
+
+test('el desvío evalúa ambos carriles: elige el lado libre/corto y esquiva badges registrados', () => {
+  const origen = { x: 0, y: 0, width: 100, height: 50 };
+  const destino = { x: 0, y: 300, width: 100, height: 50 };
+  const medio = { x: 0, y: 150, width: 100, height: 40 };    // bloquea la vertical directa
+  const lejano = { x: 2000, y: 150, width: 50, height: 40 }; // hace carísimo el carril derecho
+  const ctx = crearContextoRuteo([origen, destino, medio, lejano]);
+  const ruta = rutaEvitandoObstaculos(origen, destino, ctx);
+  assert.equal(ruta.lado, 'izquierda'); // el carril derecho quedó a 2000px: gana el corto
+
+  // un "badge" registrado a posteriori también cuenta como obstáculo
+  ctx.obstaculos.push({ x: -60, y: 140, width: 50, height: 22 }); // badge sobre el carril izquierdo
+  const ruta2 = rutaEvitandoObstaculos(origen, destino, ctx);
+  for (let i = 1; i < ruta2.puntos.length; i++) {
+    assert.ok(
+      !segmentoCruzaCaja(ruta2.puntos[i - 1], ruta2.puntos[i], { x: -60, y: 140, width: 50, height: 22 }, 4),
+      'la ruta no debe atravesar el badge registrado',
+    );
+  }
 });
 
 test('un nodo huérfano va a una fila aparte', () => {

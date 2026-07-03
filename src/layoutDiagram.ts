@@ -78,25 +78,101 @@ export function calcularLayout(grafo: Grafo, excluir?: Set<string>, direccion: D
     if (!nivel.has(id)) nivel.set(id, filaHuerfanos);
   }
 
-  // Agrupar por nivel (en orden de declaración) y repartir en X centrado en 0.
-  const porNivel = new Map<number, string[]>();
-  for (const id of ids) {
-    const n = nivel.get(id)!;
-    const fila = porNivel.get(n);
-    if (fila) fila.push(id);
-    else porNivel.set(n, [id]);
-  }
+  // Ordenar cada nivel minimizando cruces (barycenter, familia Sugiyama) y
+  // repartir con espaciado adaptativo: los niveles densos respiran más.
+  const filas = ordenarPorBarycenter(ids, nivel, grafo);
 
   const posiciones = new Map<string, Posicion>();
-  for (const [n, fila] of porNivel) {
+  const espacioCruzadoBase = direccion === 'vertical' ? ESPACIADO_X : ESPACIADO_Y;
+  filas.forEach((fila, n) => {
+    const reales = fila.filter((id) => !esDummy(id)).length;
+    const espacio = reales >= 5 ? espacioCruzadoBase * 1.25 : espacioCruzadoBase;
     fila.forEach((id, i) => {
-      const cruzado = (i - (fila.length - 1) / 2); // distribución de la fila/columna
+      if (esDummy(id)) return; // los dummies solo participan del ordenamiento
+      const cruzado = (i - (fila.length - 1) / 2) * espacio;
       posiciones.set(id, direccion === 'vertical'
-        ? { x: cruzado * ESPACIADO_X, y: n * ESPACIADO_Y, nivel: n }
-        : { x: n * ESPACIADO_X, y: cruzado * ESPACIADO_Y, nivel: n });
+        ? { x: cruzado, y: n * ESPACIADO_Y, nivel: n }
+        : { x: n * ESPACIADO_X, y: cruzado, nivel: n });
     });
-  }
+  });
   return posiciones;
+}
+
+const esDummy = (id: string) => id.charCodeAt(0) === 126; // '~'
+
+// Minimización de cruces por barycenter: en cada pasada, cada nivel se
+// reordena según la posición promedio de sus vecinos en el nivel de al lado
+// (bajada y subida, ×4). Los edges que saltan más de un nivel se expanden con
+// nodos dummy que ocupan lugar en los niveles intermedios — participan del
+// ordenamiento (y del espaciado) pero no se posicionan: el trazado real de
+// esos edges largos lo resuelve el carril anti-obstáculos del render.
+function ordenarPorBarycenter(ids: string[], nivelBase: Map<string, number>, grafo: Grafo): string[][] {
+  let maxNivel = 0;
+  for (const n of nivelBase.values()) maxNivel = Math.max(maxNivel, n);
+
+  const niveles = new Map(nivelBase);
+  const aristas: [string, string][] = [];
+  const dummies: string[] = [];
+  let nDummy = 0;
+  for (const e of grafo.edges) {
+    const na = niveles.get(e.origen);
+    const nb = niveles.get(e.destino);
+    if (na === undefined || nb === undefined) continue; // nodos excluidos (off-path)
+    if (Math.abs(nb - na) <= 1) {
+      aristas.push([e.origen, e.destino]);
+      continue;
+    }
+    const paso = nb > na ? 1 : -1;
+    let previo = e.origen;
+    for (let n = na + paso; n !== nb; n += paso) {
+      const d = '~' + nDummy++;
+      niveles.set(d, n);
+      dummies.push(d);
+      aristas.push([previo, d]);
+      previo = d;
+    }
+    aristas.push([previo, e.destino]);
+  }
+
+  const filas: string[][] = [];
+  for (let n = 0; n <= maxNivel; n++) filas.push([]);
+  for (const id of ids) filas[niveles.get(id)!].push(id); // orden inicial: declaración
+  for (const d of dummies) filas[niveles.get(d)!].push(d);
+
+  const vecinos = new Map<string, string[]>();
+  const agregarVecino = (a: string, b: string) => {
+    const lista = vecinos.get(a);
+    if (lista) lista.push(b);
+    else vecinos.set(a, [b]);
+  };
+  for (const [a, b] of aristas) {
+    agregarVecino(a, b);
+    agregarVecino(b, a);
+  }
+
+  const indice = new Map<string, number>();
+  const reindexar = () => {
+    for (const fila of filas) fila.forEach((id, i) => indice.set(id, i));
+  };
+  reindexar();
+
+  const ordenar = (fila: string[], nivelVecino: number) => {
+    const bary = new Map<string, number>();
+    for (const id of fila) {
+      const vs = (vecinos.get(id) || []).filter((v) => niveles.get(v) === nivelVecino);
+      bary.set(id, vs.length === 0
+        ? indice.get(id)! // sin vecinos de ese lado: conserva su lugar
+        : vs.reduce((suma, v) => suma + indice.get(v)!, 0) / vs.length);
+    }
+    fila.sort((a, b) => bary.get(a)! - bary.get(b)!);
+    reindexar();
+  };
+
+  for (let pasada = 0; pasada < 4; pasada++) {
+    for (let n = 1; n <= maxNivel; n++) ordenar(filas[n], n - 1);
+    for (let n = maxNivel - 1; n >= 0; n--) ordenar(filas[n], n + 1);
+  }
+  return filas;
 }
 
 export const SEPARACION_MIN_COLUMNA = 220;          // centro a centro en Y (alturas ≤ 200)

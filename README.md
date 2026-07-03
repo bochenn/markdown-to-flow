@@ -25,15 +25,45 @@ siga un formato exacto — el plugin genera lo mejor posible con lo que haya.
 - Cada nodo tiene la **forma de su tipo mermaid**: `([...])` → óvalo,
   `[...]` → rectángulo, `{...}` → rombo, `[/.../]` → paralelogramo, y su color
   sale del `classDef` del propio mermaid (con default por forma si no tiene clase).
-- En **Figma Design**: un único **Component Set `user-flow-elements`** con 4
-  variantes (`Type=Start / End` círculo, `Type=Process`, `Type=Decision`,
-  `Type=Options / Input`) en el Section "🧩 Base components"; cada nodo es una
+- En **Figma Design**: un único **Component Set `user-flow-elements`** (borde
+  dashed `#6F3ECD`) con 7 variantes (`Type=Start / End` círculo,
+  `Type=Process`, `Type=Decision`, `Type=Options / Input`, `Type=Connector`,
+  `Type=Label` y `Type=Annotation` — la nota amarilla de reingreso, 200px de
+  ancho con alto hug) en el Section "🧩 Base components"; los **tokens de
+  notación** de la leyenda (`([ ])`, `[ ]`, `{ }`, `((CO))`) se renderizan
+  como **íconos reales de 24px** (instances; los `((CO))` con sus iniciales
+  adentro), la tabla de leyenda mapea **cada fila por su "Elemento"** al ícono
+  y color correspondientes (éxito verde, error rojo, reingreso gris) y las
+  cards con tablas anchas se ensanchan solas. Los conectores simulados llevan
+  **círculo relleno al inicio y flecha al final** (geometría equivalente a los
+  caps `CIRCLE_FILLED`/`ARROW_LINES`, que la API solo permite por vértice de
+  `vectorNetwork`, incompatible con los codos curvos); cada nodo es una
   **Instance** de su variante — editar una variante propaga a sus instancias,
   y el tipo/forma de cualquier instancia puede cambiarse a mano con el
-  selector de variante nativo de Figma. Los conectores son líneas vectoriales
-  que replican el estilo del conector default de FigJam (`src/connectorStyle.ts`
-  — valores provisorios: al correr en FigJam, la consola imprime un dump con
-  las propiedades reales del conector para verificar/corregir las constantes).
+  selector de variante nativo de Figma. Los **conectores rutean en codo**
+  (elbow): en FigJam con `connectorLineType: 'ELBOWED'` + `magnet: 'AUTO'`
+  nativos (el redondeo del codo lo dibuja el editor — `cornerRadius` del
+  conector es readonly en la API); en Design con un trazado simulado de
+  tramos en ángulo recto y esquinas redondeadas (radio 8, adaptativo en
+  tramos cortos), anclado al borde más cercano — recta simple si los nodos
+  están alineados, y los retornos rodean por la derecha sin atravesar la
+  columna. El badge del label se centra a mitad de la longitud del recorrido.
+  **Evitación de obstáculos**: si la ruta default de un conector cruza el
+  bounding box de un nodo ajeno, se desvía por un carril lateral fuera del
+  diagrama (lado más cercano a los endpoints; cada uso corre el carril 16px;
+  bandas de entrada/salida con 24px de margen empujadas fuera de los nodos).
+  En FigJam la API no tiene waypoints (limitación conocida): la mitigación es
+  forzar `magnet LEFT/RIGHT` del lado del carril en esos conectores de salto
+  largo. Los **tramos horizontales que comparten franja se separan +24px**
+  (registro de franjas ocupadas, orden de creación, re-chequeando obstáculos)
+  — así los conectores que viajan juntos se ven como líneas paralelas y sus
+  badges no se apilan (los labels heredan el offset de su propia ruta, también
+  en FigJam). Los obstáculos incluyen **nodos + anotaciones + badges ya
+  creados** (cada badge se registra al crearse); las rutas rectas registran su
+  franja y hacen U-jog si pisan una ocupada; el desvío **evalúa ambos
+  carriles** (menos colisiones, luego el más corto) y el margen de detección
+  de 12px hace que rozar un borde cuente como cruce. Constantes en
+  `src/connectorStyle.ts`.
 - En **FigJam**: la API **no soporta components** (`figma.createComponent` es
   *"only available in Figma Design"* y `createInstance` tira error en FigJam,
   según la documentación oficial). En vez del fallback con `clone()`, se usa
@@ -102,12 +132,18 @@ siga un formato exacto — el plugin genera lo mejor posible con lo que haya.
     clase de la lista `OFF_PATH_CLASSES` (default `['error']`, extensible en
     `src/layoutDiagram.ts`) salen del happy path — el BFS los excluye como si
     no existieran, así el flujo principal queda lineal y sin huecos — y van a
-    una columna propia en el Section `"Edge cases y errores"`, cada uno a la
-    altura del nodo principal que origina su rama (solapamientos se empujan
-    hacia abajo lo mínimo). Los conectores que cruzan entre columnas van
-    punteados y grises, conservando su label, y quedan fuera de los Sections.
-    Orden en el canvas: Documentación → Diagrama de flujo → Edge cases y
-    errores → 🧩 Componentes base.
+    una columna aparte (derecha en vertical, debajo en horizontal), cada uno a
+    la altura del nodo principal que origina su rama. Todo vive en **una única
+    Section por flujo** (diagrama + edge cases + conectores punteados que los
+    cruzan — dos Sections separadas clipeaban esos conectores), con un título
+    suelto `"Edge cases and errors — {flowLabel}"` sobre el bloque off-path.
+    Todos los conectores van en **#874FFF** (override intencional, ambos
+    editores); el punteado es la única señal de edge case. Organización del
+    canvas en **dos pasadas**: cada Section se genera con contenido en
+    coordenadas locales, y con los tamaños reales medidos se apilan los flujos
+    en columna (200px entre bordes) con **Documentation a la izquierda**, que
+    contiene las cards y la Section anidada **"🧩 Base components"** (el
+    Component Set) al final de la columna.
 
 ## Comandos
 
@@ -137,7 +173,9 @@ Archivos de prueba en `Resources/`:
 ```
 src/parseMarkdown.ts  # parser genérico: secciones por heading, líneas de card, negritas (puro)
 src/parseMermaid.ts   # localiza ### Diagram (vía parseMarkdown) y parsea el grafo mermaid (puro)
-src/layoutDiagram.ts  # niveles por BFS (tolera ciclos) y posiciones top-down (puro)
+src/layoutDiagram.ts  # niveles por BFS (tolera ciclos), minimización de cruces por
+                      # barycenter (Sugiyama, con dummies para edges largos) y
+                      # espaciado adaptativo en niveles densos (puro)
 src/renderFigma.ts    # createStickyLike, createConnectorLike, createSectionCard, Sections;
                       # todo el branching por figma.editorType vive acá
 src/code.ts           # orquestación: mensajería con la UI, toggle, clientStorage, fuentes
@@ -174,5 +212,8 @@ Cada una se vuelve una card independiente (las ausentes se omiten con un aviso):
 6. **`### Assumptions and open questions`**
 
 El contenido de cada sección llega hasta el próximo heading de nivel igual o
-superior o un `---`. Negritas `**texto**` se renderizan en bold real; un `**`
-sin cerrar se deja como texto plano con un warning en consola.
+superior o un `---`. Negritas `**texto**` se renderizan en bold real, y el
+**código inline** `` `texto` `` se muestra sin backticks y en fuente
+monoespaciada (candidatas: Roboto Mono → Source Code Pro → IBM Plex Mono; si
+ninguna carga, solo se quitan los backticks). Marcadores sin cerrar se dejan
+como texto plano con un warning en consola.

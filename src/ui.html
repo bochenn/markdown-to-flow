@@ -156,7 +156,7 @@
       mostrar(textos().archivoCargado + f.name);
     };
     lector.onerror = () => mostrar(textos().errorLectura, true);
-    lector.readAsText(f);
+    lector.readAsText(f, 'utf-8'); // encoding explícito, no depender del default
   };
 
   texto.oninput = () => { nombreArchivo = null; }; // contenido editado a mano: ya no es "el archivo"

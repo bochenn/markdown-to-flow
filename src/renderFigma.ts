@@ -14,15 +14,40 @@
 
 import { hexARgb } from './parseMermaid.ts';
 import type { Nodo, Forma, EstiloClase } from './parseMermaid.ts';
-import { construirNegritas } from './parseMarkdown.ts';
+import { construirNegritas, construirRico } from './parseMarkdown.ts';
 import type { LineaCard, BloqueCard, TablaCard } from './parseMarkdown.ts';
 import { t } from './i18n.ts';
 import type { Idioma } from './i18n.ts';
-import { ESTILO_CONECTOR, COLOR_CONECTOR_OFFPATH } from './connectorStyle.ts';
+import {
+  ESTILO_CONECTOR,
+  RADIO_CODO,
+  DESVIO_RETORNO,
+  MARGEN_OBSTACULO,
+  MARGEN_CARRIL,
+  SEPARACION_CARRIL,
+} from './connectorStyle.ts';
 
 export const FUENTE: FontName = { family: 'Inter', style: 'Medium' };          // nodos y conectores
 export const FUENTE_REGULAR: FontName = { family: 'Inter', style: 'Regular' }; // body de las cards
 export const FUENTE_BOLD: FontName = { family: 'Inter', style: 'Bold' };       // headers y negritas
+
+// Fuente monoespaciada para el código inline (`texto`): se intenta cargar la
+// primera candidata disponible; si ninguna carga, el fallback es solo quitar
+// los backticks sin cambiar la fuente.
+let FUENTE_MONO: FontName | null = null;
+
+export async function cargarFuenteMono(): Promise<void> {
+  for (const family of ['Roboto Mono', 'Source Code Pro', 'IBM Plex Mono']) {
+    try {
+      await figma.loadFontAsync({ family, style: 'Regular' });
+      FUENTE_MONO = { family, style: 'Regular' };
+      return;
+    } catch (e) {
+      // probar la siguiente candidata
+    }
+  }
+  FUENTE_MONO = null;
+}
 
 export const ANCHO_CARD = 420;
 
@@ -129,6 +154,8 @@ function areaTexto(forma: Forma, w: number, h: number): { x: number; y: number; 
 export interface ComponentesBase {
   set: ComponentSetNode;
   variantes: Record<Forma, ComponentNode>;
+  label: ComponentNode;      // variante Type=Label: badge negro para labels de conector
+  annotation: ComponentNode; // variante Type=Annotation: nota amarilla de reingreso
 }
 
 // Convención de variantes de Figma: la propiedad se llama "Type". Nombres
@@ -206,15 +233,72 @@ export function createShapeComponents(x: number, y: number): ComponentesBase {
     resultado[forma] = comp;
   }
 
+  // 6ta variante: el badge de label de conector. Es un component con
+  // autolayout HUG en ambos ejes — las instances se autoajustan al override
+  // del texto (comportamiento estándar de autolayout en instances).
+  const label = figma.createComponent();
+  label.name = 'Type=Label';
+  label.layoutMode = 'HORIZONTAL';
+  label.primaryAxisSizingMode = 'AUTO';
+  label.counterAxisSizingMode = 'AUTO';
+  label.fills = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }];
+  label.paddingLeft = label.paddingRight = 6;
+  label.paddingTop = label.paddingBottom = 4;
+  label.cornerRadius = 11;
+  label.x = x;
+  label.y = y + offsetY;
+  const textoLabel = figma.createText();
+  textoLabel.name = 'texto';
+  textoLabel.fontName = FUENTE;
+  textoLabel.fontSize = 12;
+  textoLabel.characters = 'Label';
+  textoLabel.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+  label.appendChild(textoLabel);
+
+  // 7ma variante: la anotación de los conectores de reingreso.
+  // 200px de ancho fijo, alto hug, padding 16, texto Inter Medium 12 al 150%
+  // con "fill" en el ancho (wrap dentro del frame, sin truncar).
+  const annotation = figma.createComponent();
+  annotation.name = 'Type=Annotation';
+  annotation.layoutMode = 'VERTICAL';
+  annotation.counterAxisSizingMode = 'FIXED';
+  annotation.primaryAxisSizingMode = 'AUTO';
+  annotation.resize(200, annotation.height);
+  annotation.paddingLeft = annotation.paddingRight = annotation.paddingTop = annotation.paddingBottom = 16;
+  annotation.cornerRadius = 4;
+  annotation.fills = [{ type: 'SOLID', color: { r: 1, g: 0.976, b: 0.694 } }]; // amarillo sticky
+  annotation.effects = [{
+    type: 'DROP_SHADOW',
+    color: { r: 0, g: 0, b: 0, a: 0.15 },
+    offset: { x: 0, y: 2 },
+    radius: 3,
+    visible: true,
+    blendMode: 'NORMAL',
+  }];
+  const textoAnnotation = figma.createText();
+  textoAnnotation.name = 'texto';
+  textoAnnotation.fontName = FUENTE; // Inter Medium
+  textoAnnotation.fontSize = 12;
+  textoAnnotation.lineHeight = { value: 150, unit: 'PERCENT' };
+  textoAnnotation.characters = 'Annotation';
+  textoAnnotation.fills = [{ type: 'SOLID', color: { r: 0.25, g: 0.22, b: 0.05 } }];
+  annotation.appendChild(textoAnnotation);
+  textoAnnotation.layoutAlign = 'STRETCH'; // fill en el ancho → wrap
+  textoAnnotation.textAutoResize = 'HEIGHT';
+
   // combinar en un único Component Set; las refs a las variantes siguen válidas
   const set = figma.combineAsVariants(
-    [resultado.inicioFin, resultado.proceso, resultado.decision, resultado.inputOutput, resultado.conector],
+    [resultado.inicioFin, resultado.proceso, resultado.decision, resultado.inputOutput, resultado.conector, label, annotation],
     figma.currentPage,
   );
   set.name = 'user-flow-elements';
   set.x = x;
   set.y = y;
-  return { set, variantes: resultado };
+  // borde dashed del contenedor del set (BaseFrameMixin → strokes/dashPattern directos)
+  set.strokes = [{ type: 'SOLID', color: { r: 111 / 255, g: 62 / 255, b: 205 / 255 } }]; // #6F3ECD
+  set.strokeWeight = 2;
+  set.dashPattern = [8, 6];
+  return { set, variantes: resultado, label, annotation };
 }
 
 // Crea el nodo del diagrama centrado en (cx, cy): Instance de la variante
@@ -271,37 +355,330 @@ export function createDiagramNodeInstance(
   return instancia;
 }
 
-// Puntos de anclaje de la recta entre dos nodos (bordes enfrentados). Se usa
-// para dibujar la línea simulada en Design y para ubicar el badge del label
-// en ambos editores (en FigJam el conector nativo rutea por su cuenta: el
-// badge queda en el punto medio geométrico entre nodos).
-function puntosEntre(origen: SceneNode, destino: SceneNode): { x1: number; y1: number; x2: number; y2: number } {
+// ---------------------------------------------------------------------------
+// Ruteo en codo (elbow) para los conectores, replicando el estilo nativo de
+// FigJam: sale/entra por el borde más cercano, tramos en ángulo recto,
+// esquinas redondeadas. Funciones puras, testeables en Node.
+// ---------------------------------------------------------------------------
+
+export interface Caja { x: number; y: number; width: number; height: number }
+export interface Punto { x: number; y: number }
+
+// Polilínea del recorrido entre dos nodos. Alineados → recta simple (sin codo
+// artificial); desplazados → Z; destino arriba (retorno) → rodea por la
+// derecha para no atravesar los nodos intermedios de la columna.
+export function rutaElbow(origen: Caja, destino: Caja): Punto[] {
   if (destino.y >= origen.y + origen.height) {
-    // destino en una fila inferior: sale por abajo, entra por arriba
-    return {
-      x1: origen.x + origen.width / 2, y1: origen.y + origen.height,
-      x2: destino.x + destino.width / 2, y2: destino.y,
-    };
+    // destino abajo: sale por el borde inferior, entra por el superior
+    const x1 = origen.x + origen.width / 2, y1 = origen.y + origen.height;
+    const x2 = destino.x + destino.width / 2, y2 = destino.y;
+    if (Math.abs(x1 - x2) < 1) return [{ x: x1, y: y1 }, { x: x2, y: y2 }];
+    const midY = (y1 + y2) / 2;
+    return [{ x: x1, y: y1 }, { x: x1, y: midY }, { x: x2, y: midY }, { x: x2, y: y2 }];
   }
   if (origen.y >= destino.y + destino.height) {
-    // ponytail: back-edge (loop) como recta entre bordes derechos; si molesta
-    // el cruce con otros nodos, upgrade a ruteo ortogonal
-    return {
-      x1: origen.x + origen.width, y1: origen.y + origen.height / 2,
-      x2: destino.x + destino.width, y2: destino.y + destino.height / 2,
-    };
+    // retorno (destino arriba): sale por la derecha y rodea
+    const x1 = origen.x + origen.width, y1 = origen.y + origen.height / 2;
+    const x2 = destino.x + destino.width, y2 = destino.y + destino.height / 2;
+    const desvioX = Math.max(x1, x2) + DESVIO_RETORNO;
+    return [{ x: x1, y: y1 }, { x: desvioX, y: y1 }, { x: desvioX, y: y2 }, { x: x2, y: y2 }];
   }
   // misma fila: entre los lados que se enfrentan
   const haciaDerecha = destino.x >= origen.x;
-  return {
-    x1: haciaDerecha ? origen.x + origen.width : origen.x, y1: origen.y + origen.height / 2,
-    x2: haciaDerecha ? destino.x : destino.x + destino.width, y2: destino.y + destino.height / 2,
+  const x1 = haciaDerecha ? origen.x + origen.width : origen.x;
+  const x2 = haciaDerecha ? destino.x : destino.x + destino.width;
+  const y1 = origen.y + origen.height / 2, y2 = destino.y + destino.height / 2;
+  if (Math.abs(y1 - y2) < 1) return [{ x: x1, y: y1 }, { x: x2, y: y2 }];
+  const midX = (x1 + x2) / 2;
+  return [{ x: x1, y: y1 }, { x: midX, y: y1 }, { x: midX, y: y2 }, { x: x2, y: y2 }];
+}
+
+// Punto a mitad de la LONGITUD del recorrido (para centrar el badge del label).
+export function puntoMedioRuta(puntos: Punto[]): Punto {
+  let total = 0;
+  for (let i = 1; i < puntos.length; i++) {
+    total += Math.hypot(puntos[i].x - puntos[i - 1].x, puntos[i].y - puntos[i - 1].y);
+  }
+  let restante = total / 2;
+  for (let i = 1; i < puntos.length; i++) {
+    const largo = Math.hypot(puntos[i].x - puntos[i - 1].x, puntos[i].y - puntos[i - 1].y);
+    if (restante <= largo && largo > 0) {
+      const f = restante / largo;
+      return {
+        x: puntos[i - 1].x + (puntos[i].x - puntos[i - 1].x) * f,
+        y: puntos[i - 1].y + (puntos[i].y - puntos[i - 1].y) * f,
+      };
+    }
+    restante -= largo;
+  }
+  return puntos[puntos.length - 1];
+}
+
+// Path SVG de la polilínea con esquinas redondeadas: en cada codo se corta
+// `radio` antes y después y se une con una curva Q por el vértice. El radio
+// se reduce automáticamente si un tramo es más corto que 2×radio.
+export function pathElbow(puntos: Punto[], radio: number = RADIO_CODO): string {
+  const hacia = (desde: Punto, hasta: Punto, distancia: number): Punto => {
+    const largo = Math.hypot(hasta.x - desde.x, hasta.y - desde.y);
+    const f = largo === 0 ? 0 : distancia / largo;
+    return { x: desde.x + (hasta.x - desde.x) * f, y: desde.y + (hasta.y - desde.y) * f };
   };
+  let d = `M ${puntos[0].x} ${puntos[0].y}`;
+  for (let i = 1; i < puntos.length - 1; i++) {
+    const anterior = puntos[i - 1], codo = puntos[i], siguiente = puntos[i + 1];
+    const r = Math.min(
+      radio,
+      Math.hypot(codo.x - anterior.x, codo.y - anterior.y) / 2,
+      Math.hypot(siguiente.x - codo.x, siguiente.y - codo.y) / 2,
+    );
+    const entrada = hacia(codo, anterior, r);
+    const salida = hacia(codo, siguiente, r);
+    d += ` L ${entrada.x} ${entrada.y} Q ${codo.x} ${codo.y} ${salida.x} ${salida.y}`;
+  }
+  const fin = puntos[puntos.length - 1];
+  d += ` L ${fin.x} ${fin.y}`;
+  return d;
+}
+
+// ---------------------------------------------------------------------------
+// Desvío por carril lateral: si la ruta default de un conector cruza el
+// bounding box de un nodo que no es su origen ni su destino, se lo saca a un
+// carril fuera del diagrama (heurística simple, sin pathfinding):
+// sale por abajo → banda libre → carril lateral → banda sobre el destino →
+// entra por arriba. Cada uso del carril se corre 16px para no superponerse.
+// ---------------------------------------------------------------------------
+
+export interface ContextoRuteo {
+  obstaculos: Caja[];
+  carrilDerecha: number;
+  carrilIzquierda: number;
+  usosDerecha: number;
+  usosIzquierda: number;
+  tramosH: { y: number; x1: number; x2: number }[]; // franjas horizontales ya ocupadas
+}
+
+export function crearContextoRuteo(obstaculos: Caja[]): ContextoRuteo {
+  let minX = Infinity, maxX = -Infinity;
+  for (const o of obstaculos) {
+    minX = Math.min(minX, o.x);
+    maxX = Math.max(maxX, o.x + o.width);
+  }
+  return {
+    obstaculos,
+    carrilDerecha: maxX + MARGEN_CARRIL,
+    carrilIzquierda: minX - MARGEN_CARRIL,
+    usosDerecha: 0,
+    usosIzquierda: 0,
+    tramosH: [],
+  };
+}
+
+// Segmento axis-aligned vs caja expandida por `margen` (test de solapamiento
+// de rectángulos: el segmento es un rectángulo degenerado).
+export function segmentoCruzaCaja(a: Punto, b: Punto, caja: Caja, margen: number): boolean {
+  return Math.min(a.x, b.x) < caja.x + caja.width + margen
+    && Math.max(a.x, b.x) > caja.x - margen
+    && Math.min(a.y, b.y) < caja.y + caja.height + margen
+    && Math.max(a.y, b.y) > caja.y - margen;
+}
+
+function esMismaCaja(a: Caja, b: Caja): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+// margen de detección: rozar el borde de un elemento cuenta como cruce
+const MARGEN_DETECCION = 12;
+
+function contarColisiones(puntos: Punto[], obstaculos: Caja[], origen: Caja, destino: Caja): number {
+  let total = 0;
+  for (let i = 1; i < puntos.length; i++) {
+    for (const o of obstaculos) {
+      if (esMismaCaja(o, origen) || esMismaCaja(o, destino)) continue;
+      if (segmentoCruzaCaja(puntos[i - 1], puntos[i], o, MARGEN_DETECCION)) total++;
+    }
+  }
+  return total;
+}
+
+function rutaCruzaObstaculos(puntos: Punto[], obstaculos: Caja[], origen: Caja, destino: Caja): boolean {
+  return contarColisiones(puntos, obstaculos, origen, destino) > 0;
+}
+
+function largoRuta(puntos: Punto[]): number {
+  let total = 0;
+  for (let i = 1; i < puntos.length; i++) {
+    total += Math.hypot(puntos[i].x - puntos[i - 1].x, puntos[i].y - puntos[i - 1].y);
+  }
+  return total;
+}
+
+// Empuja una banda horizontal (a la altura `y`, entre x1 y x2) fuera de
+// cualquier obstáculo que la pise, hacia abajo o hacia arriba.
+function empujarBanda(
+  y: number,
+  x1: number,
+  x2: number,
+  obstaculos: Caja[],
+  origen: Caja,
+  destino: Caja,
+  direccion: 'abajo' | 'arriba',
+): number {
+  for (let vueltas = 0; vueltas < 20; vueltas++) {
+    let cambiado = false;
+    for (const o of obstaculos) {
+      if (esMismaCaja(o, origen) || esMismaCaja(o, destino)) continue;
+      if (segmentoCruzaCaja({ x: Math.min(x1, x2), y }, { x: Math.max(x1, x2), y }, o, 4)) {
+        y = direccion === 'abajo' ? o.y + o.height + MARGEN_OBSTACULO : o.y - MARGEN_OBSTACULO;
+        cambiado = true;
+      }
+    }
+    if (!cambiado) break;
+  }
+  return y;
+}
+
+// Separa los tramos horizontales INTERIORES de una ruta de las franjas ya
+// ocupadas por rutas anteriores (mismo carril/banda): cada solape corre el
+// tramo +SEPARACION_CARRIL, re-chequeando que no caiga sobre un nodo. Los
+// labels heredan la separación porque el badge se centra sobre la ruta final.
+// El orden es determinístico: orden de creación de los conectores.
+function separarTramosCompartidos(puntos: Punto[], ctx: ContextoRuteo, origen: Caja, destino: Caja): void {
+  for (let i = 1; i + 2 < puntos.length; i++) {
+    const a = puntos[i];
+    const b = puntos[i + 1];
+    if (a.y !== b.y) continue; // solo tramos horizontales interiores
+    const x1 = Math.min(a.x, b.x);
+    const x2 = Math.max(a.x, b.x);
+    let y = a.y;
+    for (let vueltas = 0; vueltas < 30; vueltas++) {
+      let movido = false;
+      for (const t of ctx.tramosH) {
+        if (x1 < t.x2 && x2 > t.x1 && Math.abs(y - t.y) < SEPARACION_CARRIL - 4) {
+          y += SEPARACION_CARRIL;
+          movido = true;
+        }
+      }
+      // el corrimiento no debe meter el tramo sobre un nodo ajeno
+      for (const o of ctx.obstaculos) {
+        if (esMismaCaja(o, origen) || esMismaCaja(o, destino)) continue;
+        if (segmentoCruzaCaja({ x: x1, y }, { x: x2, y }, o, 4)) {
+          y = o.y + o.height + MARGEN_OBSTACULO;
+          movido = true;
+        }
+      }
+      if (!movido) break;
+    }
+    a.y = y;
+    b.y = y;
+    ctx.tramosH.push({ y, x1, x2 });
+  }
+}
+
+export interface RutaCalculada {
+  puntos: Punto[];
+  lado: 'derecha' | 'izquierda' | null; // null = ruta default, sin desvío
+}
+
+export function rutaEvitandoObstaculos(origen: Caja, destino: Caja, ctx?: ContextoRuteo): RutaCalculada {
+  const base = rutaElbow(origen, destino);
+  if (!ctx || !rutaCruzaObstaculos(base, ctx.obstaculos, origen, destino)) {
+    if (ctx) {
+      // ruta recta de 2 puntos: registra su franja, y si pisa una franja ya
+      // ocupada se convierte en U-jog (el corrimiento lo hace separarTramos)
+      if (base.length === 2 && base[0].y === base[1].y) {
+        const x1 = Math.min(base[0].x, base[1].x);
+        const x2 = Math.max(base[0].x, base[1].x);
+        const pisa = ctx.tramosH.some((t) => x1 < t.x2 && x2 > t.x1 && Math.abs(base[0].y - t.y) < SEPARACION_CARRIL - 4);
+        if (pisa) {
+          const dirX = base[1].x >= base[0].x ? 1 : -1;
+          const yJog = base[0].y + SEPARACION_CARRIL; // banda inicial; separarTramos la corre lo que haga falta
+          const jog: Punto[] = [
+            base[0],
+            { x: base[0].x + dirX * 24, y: base[0].y },
+            { x: base[0].x + dirX * 24, y: yJog },
+            { x: base[1].x - dirX * 24, y: yJog },
+            { x: base[1].x - dirX * 24, y: base[1].y },
+            base[1],
+          ];
+          separarTramosCompartidos(jog, ctx, origen, destino);
+          return { puntos: jog, lado: null };
+        }
+        ctx.tramosH.push({ y: base[0].y, x1, x2 });
+      } else {
+        separarTramosCompartidos(base, ctx, origen, destino);
+      }
+    }
+    return { puntos: base, lado: null };
+  }
+
+  // construir la ruta candidata por CADA carril y elegir la de menos
+  // colisiones (empate → la más corta), en vez de decidir solo por cercanía
+  const candidata = (usarDerecha: boolean): Punto[] => {
+    const carrilX = usarDerecha
+      ? ctx.carrilDerecha + ctx.usosDerecha * SEPARACION_CARRIL
+      : ctx.carrilIzquierda - ctx.usosIzquierda * SEPARACION_CARRIL;
+    const sx = origen.x + origen.width / 2;
+    const ex = destino.x + destino.width / 2;
+    const ySalida = empujarBanda(
+      origen.y + origen.height + MARGEN_OBSTACULO, sx, carrilX, ctx.obstaculos, origen, destino, 'abajo',
+    );
+    const yEntrada = empujarBanda(
+      destino.y - MARGEN_OBSTACULO, ex, carrilX, ctx.obstaculos, origen, destino, 'arriba',
+    );
+    return [
+      { x: sx, y: origen.y + origen.height },
+      { x: sx, y: ySalida },
+      { x: carrilX, y: ySalida },
+      { x: carrilX, y: yEntrada },
+      { x: ex, y: yEntrada },
+      { x: ex, y: destino.y },
+    ];
+  };
+
+  const porDerecha = candidata(true);
+  const porIzquierda = candidata(false);
+  const colDer = contarColisiones(porDerecha, ctx.obstaculos, origen, destino);
+  const colIzq = contarColisiones(porIzquierda, ctx.obstaculos, origen, destino);
+  let usarDerecha: boolean;
+  if (colDer !== colIzq) usarDerecha = colDer < colIzq;
+  else usarDerecha = largoRuta(porDerecha) <= largoRuta(porIzquierda);
+
+  const puntos = usarDerecha ? porDerecha : porIzquierda;
+  if (usarDerecha) ctx.usosDerecha++;
+  else ctx.usosIzquierda++;
+
+  separarTramosCompartidos(puntos, ctx, origen, destino);
+  return { puntos, lado: usarDerecha ? 'derecha' : 'izquierda' };
+}
+
+// Punta de flecha en V al final del recorrido. El último tramo siempre es
+// axis-aligned, así que hay solo 4 orientaciones posibles.
+function pathFlecha(puntos: Punto[], tam = 8): string {
+  const fin = puntos[puntos.length - 1];
+  const previo = puntos[puntos.length - 2];
+  const dx = fin.x - previo.x, dy = fin.y - previo.y;
+  if (Math.abs(dy) >= Math.abs(dx)) {
+    const s = dy >= 0 ? -1 : 1; // llega bajando → alas hacia arriba, y viceversa
+    return `M ${fin.x - tam} ${fin.y + s * tam} L ${fin.x} ${fin.y} L ${fin.x + tam} ${fin.y + s * tam}`;
+  }
+  const s = dx >= 0 ? -1 : 1;
+  return `M ${fin.x + s * tam} ${fin.y - tam} L ${fin.x} ${fin.y} L ${fin.x + s * tam} ${fin.y + tam}`;
 }
 
 // Badge negro tipo pill para el label de un conector, centrado en (cx, cy).
 // Solo reemplaza cómo se muestra el label; la línea/flecha no se toca.
-function crearBadgeLabel(label: string, cx: number, cy: number): FrameNode {
+// En Figma Design es una instance de la variante Type=Label del Component Set;
+// en FigJam (sin components) es un frame armado a mano con el mismo estilo.
+function crearBadgeLabel(label: string, cx: number, cy: number, comps?: ComponentesBase | null): SceneNode {
+  if (comps) {
+    const instancia = comps.label.createInstance();
+    const texto = instancia.findOne((n) => n.type === 'TEXT') as TextNode | null;
+    if (texto) texto.characters = label;
+    // el HUG recalcula el tamaño con el texto overrideado; leerlo después
+    instancia.x = cx - instancia.width / 2;
+    instancia.y = cy - instancia.height / 2;
+    return instancia;
+  }
   const badge = figma.createFrame();
   badge.name = label;
   badge.layoutMode = 'HORIZONTAL';
@@ -331,13 +708,21 @@ function crearBadgeLabel(label: string, cx: number, cy: number): FrameNode {
 // El label (si hay) va como badge negro en el punto medio, no como texto nativo.
 let dumpConectorLogueado = false;
 
-export async function createConnectorLike(origen: SceneNode, destino: SceneNode, label?: string, offPath?: boolean, lang: Idioma = 'en'): Promise<SceneNode[]> {
-  const colorLinea = offPath ? COLOR_CONECTOR_OFFPATH : ESTILO_CONECTOR.color;
+export async function createConnectorLike(origen: SceneNode, destino: SceneNode, label?: string, offPath?: boolean, lang: Idioma = 'en', ruteo?: ContextoRuteo, comps?: ComponentesBase | null): Promise<SceneNode[]> {
+  // ruta final (con desvío por carril si la default cruza otros nodos);
+  // también posiciona el badge del label en ambos editores
+  const ruta = rutaEvitandoObstaculos(origen, destino, ruteo);
 
   if (figma.editorType === 'figjam') {
     const conector = figma.createConnector();
-    conector.connectorStart = { endpointNodeId: origen.id, magnet: 'AUTO' };
-    conector.connectorEnd = { endpointNodeId: destino.id, magnet: 'AUTO' };
+    // el default real NO es elbowed: forzarlo explícito; el redondeo del codo
+    // lo pone FigJam (cornerRadius del conector es readonly en la API).
+    // La API no tiene waypoints (limitación conocida): para los saltos largos
+    // la única influencia es forzar el magnet hacia el lado del carril.
+    conector.connectorLineType = 'ELBOWED';
+    const magnet = ruta.lado === null ? 'AUTO' : (ruta.lado === 'derecha' ? 'RIGHT' : 'LEFT');
+    conector.connectorStart = { endpointNodeId: origen.id, magnet };
+    conector.connectorEnd = { endpointNodeId: destino.id, magnet };
     if (!dumpConectorLogueado) {
       // dump de verificación: pegar estos valores en connectorStyle.ts si difieren
       dumpConectorLogueado = true;
@@ -351,70 +736,98 @@ export async function createConnectorLike(origen: SceneNode, destino: SceneNode,
         dashPattern: c.dashPattern,
       }));
     }
+    // color único para todos los conectores (override intencional del default)
+    conector.strokes = [{ type: 'SOLID', color: ESTILO_CONECTOR.color }];
     if (offPath) {
-      // único caso con override explícito de estilo sobre el default
-      conector.strokes = [{ type: 'SOLID', color: colorLinea }];
-      conector.dashPattern = [6, 6];
+      conector.dashPattern = [6, 6]; // el punteado es la única señal de edge case
     }
     if (label) {
-      const p = puntosEntre(origen, destino);
-      return [conector, crearBadgeLabel(label, (p.x1 + p.x2) / 2, (p.y1 + p.y2) / 2)];
+      const medio = puntoMedioRuta(ruta.puntos);
+      const badge = crearBadgeLabel(label, medio.x, medio.y, comps);
+      // el badge pasa a ser obstáculo para los conectores siguientes
+      if (ruteo) ruteo.obstaculos.push({ x: badge.x, y: badge.y, width: badge.width, height: badge.height });
+      return [conector, badge];
     }
     return [conector];
   }
 
-  // Figma Design: línea recta entre bordes. No es re-enrutable, alcanza para v1.
-  const { x1, y1, x2, y2 } = puntosEntre(origen, destino);
-  if (x1 === x2 && y1 === y2) return [];
+  // Figma Design: trazado en codo con esquinas redondeadas, mismo criterio
+  // visual que el elbowed nativo. No es re-enrutable, alcanza para v1.
+  const puntos = ruta.puntos;
+  const inicio = puntos[0];
+  const fin = puntos[puntos.length - 1];
+  if (inicio.x === fin.x && inicio.y === fin.y) return [];
 
   const linea = figma.createVector();
   linea.name = label ? t('canvas.capaFlecha', lang, { label }) : t('canvas.capaFlechaSimple', lang);
-  linea.strokes = [{ type: 'SOLID', color: colorLinea }];
+  linea.strokes = [{ type: 'SOLID', color: ESTILO_CONECTOR.color }];
   linea.strokeWeight = ESTILO_CONECTOR.strokeWeight;
   if (offPath) linea.dashPattern = [6, 6];
   linea.x = 0;
   linea.y = 0;
-  await linea.setVectorNetworkAsync({
-    vertices: [
-      { x: x1, y: y1, strokeCap: 'NONE' },
-      { x: x2, y: y2, strokeCap: 'ARROW_LINES' },
-    ],
-    segments: [{ start: 0, end: 1 }],
-    regions: [],
-  });
+  // recorrido y punta de flecha como dos subpaths del mismo vector
+  linea.vectorPaths = [
+    { windingRule: 'NONE', data: pathElbow(puntos) },
+    { windingRule: 'NONE', data: pathFlecha(puntos) },
+  ];
 
-  const creados: SceneNode[] = [linea];
+  // cap de inicio "Circle Arrow": los caps por extremo solo existen en
+  // vectorNetwork (sin curvas), así que se replica la geometría exacta de
+  // CIRCLE_FILLED con un punto relleno; la V del final ya es ARROW_LINES
+  const punto = figma.createEllipse();
+  punto.name = 'inicio';
+  punto.resize(8, 8);
+  punto.fills = [{ type: 'SOLID', color: ESTILO_CONECTOR.color }];
+  punto.x = inicio.x - 4;
+  punto.y = inicio.y - 4;
+
+  const creados: SceneNode[] = [linea, punto];
   if (label) {
-    creados.push(crearBadgeLabel(label, (x1 + x2) / 2, (y1 + y2) / 2));
+    const medio = puntoMedioRuta(puntos);
+    const badge = crearBadgeLabel(label, medio.x, medio.y, comps);
+    // el badge pasa a ser obstáculo para los conectores siguientes
+    if (ruteo) ruteo.obstaculos.push({ x: badge.x, y: badge.y, width: badge.width, height: badge.height });
+    creados.push(badge);
   }
   return creados;
 }
 
-// Concatena las líneas de una card en un solo texto, acumulando los rangos
-// que van en bold (compartido entre la card frame y el sticky nativo).
-function construirCuerpo(lineas: LineaCard[], lang: Idioma): { cuerpo: string; rangos: { inicio: number; fin: number }[] } {
+// Concatena las líneas de una card en un solo texto, acumulando los rangos de
+// negrita y de código inline (los backticks ya salen removidos).
+function construirCuerpo(lineas: LineaCard[], lang: Idioma): {
+  cuerpo: string;
+  negritas: { inicio: number; fin: number }[];
+  codigo: { inicio: number; fin: number }[];
+} {
   let cuerpo = '';
-  const rangos: { inicio: number; fin: number }[] = [];
+  const negritas: { inicio: number; fin: number }[] = [];
+  const codigo: { inicio: number; fin: number }[] = [];
   for (const linea of lineas) {
-    const negrita = construirNegritas(linea.texto);
-    if (negrita.malCerrado) {
+    const rico = construirRico(linea.texto);
+    if (rico.malCerrado) {
       console.warn('[markdown-to-flow] ' + t('aviso.negritaSinCerrar', lang, { linea: linea.texto }));
     }
     const prefijo = '    '.repeat(linea.sangria);
     const offset = cuerpo.length + prefijo.length;
-    for (const r of negrita.rangos) {
-      rangos.push({ inicio: offset + r.inicio, fin: offset + r.fin });
-    }
-    cuerpo += prefijo + negrita.texto + '\n';
+    for (const r of rico.negritas) negritas.push({ inicio: offset + r.inicio, fin: offset + r.fin });
+    for (const r of rico.codigo) codigo.push({ inicio: offset + r.inicio, fin: offset + r.fin });
+    cuerpo += prefijo + rico.texto + '\n';
   }
   cuerpo = cuerpo.length > 0 ? cuerpo.slice(0, -1) : t('canvas.sinContenido', lang);
-  return { cuerpo, rangos };
+  return { cuerpo, negritas, codigo };
 }
 
 // Card de documentación: frame blanco con header en bold y el contenido por
-// bloques — texto (con negritas por rangos) intercalado con tablas reales.
-// Igual en los dos editores.
-export function createSectionCard(titulo: string, bloques: BloqueCard[], x: number, y: number, lang: Idioma = 'en'): FrameNode {
+// bloques — texto (con negritas/código por rangos, y tokens de forma como
+// íconos reales cuando hay Component Set) intercalado con tablas reales.
+export function createSectionCard(titulo: string, bloques: BloqueCard[], x: number, y: number, lang: Idioma = 'en', comps?: ComponentesBase | null): FrameNode {
+  // ancho dinámico: las cards con tablas anchas (ej. la leyenda de 4 columnas)
+  // se ensanchan para que ninguna celda/ícono quede recortado
+  let maxColumnas = 0;
+  for (const b of bloques) {
+    if (b.tipo === 'tabla') maxColumnas = Math.max(maxColumnas, b.tabla.headers.length);
+  }
+  const anchoCard = Math.max(ANCHO_CARD, maxColumnas * 140 + 48);
   const card = figma.createFrame();
   card.name = titulo;
   card.fills = [{ type: 'SOLID', color: { r: 0.99, g: 0.99, b: 0.99 } }];
@@ -432,7 +845,7 @@ export function createSectionCard(titulo: string, bloques: BloqueCard[], x: numb
   card.layoutMode = 'VERTICAL';
   card.primaryAxisSizingMode = 'AUTO';
   card.counterAxisSizingMode = 'FIXED';
-  card.resize(ANCHO_CARD, card.height);
+  card.resize(anchoCard, card.height);
   card.paddingTop = card.paddingBottom = card.paddingLeft = card.paddingRight = 24;
   card.itemSpacing = 12;
 
@@ -445,30 +858,60 @@ export function createSectionCard(titulo: string, bloques: BloqueCard[], x: numb
   header.layoutAlign = 'STRETCH';
   header.textAutoResize = 'HEIGHT';
 
-  const agregarTexto = (lineas: LineaCard[]) => {
-    const { cuerpo, rangos } = construirCuerpo(lineas, lang);
+  const agregarBloqueTexto = (lineas: LineaCard[]) => {
+    const { cuerpo, negritas, codigo } = construirCuerpo(lineas, lang);
     const body = figma.createText();
     body.fontName = FUENTE_REGULAR;
     body.fontSize = 13;
     body.lineHeight = { value: 150, unit: 'PERCENT' };
     body.characters = cuerpo;
     body.fills = [{ type: 'SOLID', color: { r: 0.2, g: 0.2, b: 0.22 } }];
-    for (const r of rangos) {
+    for (const r of negritas) {
       body.setRangeFontName(r.inicio, r.fin, FUENTE_BOLD);
+    }
+    if (FUENTE_MONO) {
+      for (const r of codigo) body.setRangeFontName(r.inicio, r.fin, FUENTE_MONO);
     }
     card.appendChild(body);
     body.layoutAlign = 'STRETCH';
     body.textAutoResize = 'HEIGHT';
   };
 
+  // las líneas con token de forma se renderizan como fila con ícono; el resto
+  // se agrupa en TextNodes como siempre, preservando el orden
+  const agregarTexto = (lineas: LineaCard[]) => {
+    if (lineas.length === 0) {
+      agregarBloqueTexto([]); // "(sin contenido)"
+      return;
+    }
+    let pendientes: LineaCard[] = [];
+    const volcar = () => {
+      if (pendientes.length > 0) {
+        agregarBloqueTexto(pendientes);
+        pendientes = [];
+      }
+    };
+    for (const linea of lineas) {
+      const rico = construirRico(linea.texto);
+      const token = comps ? rico.texto.match(REGEX_TOKEN_FORMA) : null;
+      if (token && token.index !== undefined) {
+        volcar();
+        card.appendChild(crearFilaConIcono(rico, token, comps!, 13, '    '.repeat(linea.sangria)));
+      } else {
+        pendientes.push(linea);
+      }
+    }
+    volcar();
+  };
+
   if (bloques.length === 0) {
-    agregarTexto([]); // "(sin contenido)"
+    agregarBloqueTexto([]); // "(sin contenido)"
   }
   for (const bloque of bloques) {
     if (bloque.tipo === 'texto') {
       agregarTexto(bloque.lineas);
     } else {
-      card.appendChild(crearTabla(bloque.tabla, ANCHO_CARD - 48, lang));
+      card.appendChild(crearTabla(bloque.tabla, anchoCard - 48, lang, comps));
     }
   }
 
@@ -490,10 +933,22 @@ export function crearTituloFlujo(label: string, x: number, y: number): TextNode 
   return titulo;
 }
 
-// Anotación al costado de un nodo conector: "CO → descripción de la leyenda",
-// con pinta de sticky note chico (el sticky nativo de FigJam no se puede
-// achicar — no tiene resize — así que se simula igual en los dos editores).
-export function crearAnotacionConector(texto: string, x: number, y: number): FrameNode {
+// Anotación al costado de un nodo conector: "CO → descripción de la leyenda".
+// En Figma Design es una instance de la variante Type=Annotation del set;
+// en FigJam (sin components) se simula con un frame equivalente.
+export function crearAnotacionConector(texto: string, x: number, y: number, comps?: ComponentesBase | null): SceneNode {
+  if (comps) {
+    const instancia = comps.annotation.createInstance();
+    const contenido = instancia.findOne((n) => n.type === 'TEXT') as TextNode | null;
+    if (contenido) contenido.characters = texto;
+    instancia.x = x;
+    instancia.y = y;
+    return instancia;
+  }
+  return crearAnotacionFrame(texto, x, y);
+}
+
+function crearAnotacionFrame(texto: string, x: number, y: number): FrameNode {
   const nota = figma.createFrame();
   nota.name = texto;
   nota.layoutMode = 'HORIZONTAL';
@@ -523,25 +978,154 @@ export function crearAnotacionConector(texto: string, x: number, y: number): Fra
   return nota;
 }
 
+// ---------------------------------------------------------------------------
+// Tokens de notación mermaid en textos de leyenda (`([ ])`, `[ ]`, `{ }`,
+// `((CO))`) → ícono real: instance chica (24px de alto) de la variante
+// correspondiente del Component Set. Solo Figma Design (FigJam no tiene
+// instances: ahí el token queda como texto).
+// ---------------------------------------------------------------------------
+
+const REGEX_TOKEN_FORMA = /(\(\(\s*[A-Za-z0-9]*\s*\)\)|\(\[\s*\]\)|\[\s*\]|\{\s*\})/;
+
+function formaDeToken(token: string): Forma {
+  if (token.indexOf('((') === 0) return 'conector';
+  if (token.indexOf('([') === 0) return 'inicioFin';
+  if (token.indexOf('{') === 0) return 'decision';
+  return 'proceso';
+}
+
+// texto interno de un token de conector: "((CO))" → "CO"
+function inicialesDeToken(token: string): string {
+  const m = token.match(/^\(\(\s*([A-Za-z0-9]+)\s*\)\)$/);
+  return m ? m[1] : '';
+}
+
+function crearIconoForma(
+  forma: Forma,
+  comps: ComponentesBase,
+  opciones?: { texto?: string; fill?: Color; stroke?: Color },
+): InstanceNode {
+  const icono = comps.variantes[forma].createInstance();
+  const textoNodo = icono.findOne((n) => n.type === 'TEXT') as TextNode | null;
+  // con texto (ej. las iniciales "CO") queda visible y escala con el rescale;
+  // sin texto se vacía el placeholder para que sea un ícono puro
+  if (textoNodo) textoNodo.characters = opciones && opciones.texto ? opciones.texto : '';
+  if (opciones && (opciones.fill || opciones.stroke)) {
+    const geometrias = icono.findAll((n) => n.type === 'ELLIPSE' || n.type === 'RECTANGLE' || n.type === 'VECTOR') as Geometria[];
+    geometrias.forEach((g, i) => {
+      if (opciones.stroke) g.strokes = [{ type: 'SOLID', color: opciones.stroke }];
+      if (i === 0 && opciones.fill) g.fills = [{ type: 'SOLID', color: opciones.fill }];
+    });
+  }
+  icono.rescale(24 / icono.height);
+  return icono;
+}
+
+// Paleta de la leyenda (la misma del archivo de referencia).
+const COLORES_LEYENDA = {
+  verde: { fill: { r: 0.863, g: 0.988, b: 0.906 }, stroke: { r: 0.086, g: 0.643, b: 0.29 } },
+  azul: { fill: { r: 0.859, g: 0.918, b: 0.996 }, stroke: { r: 0.008, g: 0.533, b: 0.82 } },
+  ambar: { fill: { r: 0.996, g: 0.976, b: 0.765 }, stroke: { r: 0.792, g: 0.541, b: 0.016 } },
+  rojo: { fill: { r: 0.996, g: 0.886, b: 0.886 }, stroke: { r: 0.863, g: 0.149, b: 0.149 } },
+};
+
+const normalizarTexto = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+// Mapeo directo de la tabla de leyenda (caso conocido): cada fila recibe su
+// ícono según la columna "Elemento", tenga o no el token en el texto.
+function iconoDeElemento(elemento: string): { forma: Forma; fill?: Color; stroke?: Color } | null {
+  const e = normalizarTexto(elemento);
+  if (e.indexOf('inicio') !== -1 || e.indexOf('fin') !== -1) return { forma: 'inicioFin', ...COLORES_LEYENDA.verde };
+  if (e.indexOf('accion') !== -1 || e.indexOf('pantalla') !== -1) return { forma: 'proceso', ...COLORES_LEYENDA.azul };
+  if (e.indexOf('decision') !== -1) return { forma: 'decision', ...COLORES_LEYENDA.ambar };
+  if (e.indexOf('exito') !== -1) return { forma: 'proceso', ...COLORES_LEYENDA.verde };
+  if (e.indexOf('error') !== -1 || e.indexOf('fallo') !== -1) return { forma: 'proceso', ...COLORES_LEYENDA.rojo };
+  if (e.indexOf('reingreso') !== -1) return { forma: 'conector' }; // gris default del junction
+  return null;
+}
+
+// TextNode con rangos de negrita/código ya calculados (para las partes
+// antes/después de un ícono).
+function textoConFormatos(
+  contenido: string,
+  negritas: { inicio: number; fin: number }[],
+  codigo: { inicio: number; fin: number }[],
+  fontSize: number,
+): TextNode {
+  const nodo = figma.createText();
+  nodo.fontName = FUENTE_REGULAR;
+  nodo.fontSize = fontSize;
+  nodo.characters = contenido;
+  nodo.fills = [{ type: 'SOLID', color: { r: 0.2, g: 0.2, b: 0.22 } }];
+  for (const r of negritas) nodo.setRangeFontName(r.inicio, r.fin, FUENTE_BOLD);
+  if (FUENTE_MONO) {
+    for (const r of codigo) nodo.setRangeFontName(r.inicio, r.fin, FUENTE_MONO);
+  }
+  return nodo;
+}
+
+// Fila en autolayout horizontal: texto antes + ícono de 24px + texto después.
+function crearFilaConIcono(
+  rico: { texto: string; negritas: { inicio: number; fin: number }[]; codigo: { inicio: number; fin: number }[] },
+  match: RegExpMatchArray,
+  comps: ComponentesBase,
+  fontSize: number,
+  prefijo: string,
+): FrameNode {
+  const desde = match.index!;
+  const hasta = desde + match[0].length;
+  const recortar = (rangos: { inicio: number; fin: number }[], ini: number, fin: number, offset: number) =>
+    rangos
+      .filter((r) => r.fin > ini && r.inicio < fin)
+      .map((r) => ({ inicio: Math.max(r.inicio, ini) - ini + offset, fin: Math.min(r.fin, fin) - ini + offset }));
+
+  const fila = figma.createFrame();
+  fila.name = rico.texto;
+  fila.layoutMode = 'HORIZONTAL';
+  fila.primaryAxisSizingMode = 'AUTO';
+  fila.counterAxisSizingMode = 'AUTO';
+  fila.counterAxisAlignItems = 'CENTER';
+  fila.itemSpacing = 6;
+  fila.fills = [];
+
+  const antes = prefijo + rico.texto.slice(0, desde);
+  if (antes.trim().length > 0) {
+    fila.appendChild(textoConFormatos(antes, recortar(rico.negritas, 0, desde, prefijo.length), recortar(rico.codigo, 0, desde, prefijo.length), fontSize));
+  }
+  fila.appendChild(crearIconoForma(formaDeToken(match[0]), comps, { texto: inicialesDeToken(match[0]) }));
+  const despues = rico.texto.slice(hasta);
+  if (despues.trim().length > 0) {
+    fila.appendChild(textoConFormatos(despues, recortar(rico.negritas, hasta, rico.texto.length, 0), recortar(rico.codigo, hasta, rico.texto.length, 0), fontSize));
+  }
+  return fila;
+}
+
 // Tabla dentro de una card: nativa en FigJam (createTable + cellAt), simulada
 // con frames en Figma Design. Devuelve el nodo listo para appendChild.
-function crearTabla(tabla: TablaCard, anchoDisponible: number, lang: Idioma): SceneNode {
+function crearTabla(tabla: TablaCard, anchoDisponible: number, lang: Idioma, comps?: ComponentesBase | null): SceneNode {
   if (figma.editorType === 'figjam') {
     try {
       const nativa = figma.createTable(tabla.filas.length + 1, tabla.headers.length);
+      // fijar SIEMPRE una fuente ya cargada antes de setear characters: la
+      // fuente default de la celda puede no estar cargada y setear texto con
+      // fuente sin cargar produce glifos corruptos (tildes, ñ, →)
       tabla.headers.forEach((h, c) => {
         const celda = nativa.cellAt(0, c);
         const plano = construirNegritas(h).texto;
+        celda.text.fontName = FUENTE_BOLD;
         celda.text.characters = plano;
-        celda.text.setRangeFontName(0, plano.length, FUENTE_BOLD);
         celda.fills = [{ type: 'SOLID', color: { r: 0.93, g: 0.93, b: 0.95 } }];
       });
       tabla.filas.forEach((fila, f) => {
         fila.forEach((valor, c) => {
-          const negrita = construirNegritas(valor);
+          const rico = construirRico(valor);
           const celda = nativa.cellAt(f + 1, c);
-          celda.text.characters = negrita.texto;
-          for (const r of negrita.rangos) celda.text.setRangeFontName(r.inicio, r.fin, FUENTE_BOLD);
+          celda.text.fontName = FUENTE_REGULAR;
+          celda.text.characters = rico.texto;
+          for (const r of rico.negritas) celda.text.setRangeFontName(r.inicio, r.fin, FUENTE_BOLD);
+          if (FUENTE_MONO) {
+            for (const r of rico.codigo) celda.text.setRangeFontName(r.inicio, r.fin, FUENTE_MONO);
+          }
         });
       });
       return nativa;
@@ -560,6 +1144,13 @@ function crearTabla(tabla: TablaCard, anchoDisponible: number, lang: Idioma): Sc
   contenedor.counterAxisSizingMode = 'AUTO';
   contenedor.fills = [];
 
+  // tabla de leyenda (caso conocido): headers "Elemento" + "Forma" → la celda
+  // de Forma lleva SIEMPRE su ícono mapeado por el texto de Elemento
+  const esLeyenda = comps
+    && tabla.headers.length >= 2
+    && normalizarTexto(tabla.headers[0]).indexOf('elemento') !== -1
+    && normalizarTexto(tabla.headers[1]).indexOf('forma') !== -1;
+
   const crearFila = (valores: string[], esHeader: boolean) => {
     const fila = figma.createFrame();
     fila.layoutMode = 'HORIZONTAL';
@@ -568,7 +1159,7 @@ function crearTabla(tabla: TablaCard, anchoDisponible: number, lang: Idioma): Sc
     fila.fills = esHeader ? [{ type: 'SOLID', color: { r: 0.93, g: 0.93, b: 0.95 } }] : [];
     fila.strokes = [{ type: 'SOLID', color: { r: 0.85, g: 0.85, b: 0.87 } }];
     fila.strokeBottomWeight = 1;
-    for (const valor of valores) {
+    valores.forEach((valor, col) => {
       const celda = figma.createFrame();
       celda.layoutMode = 'VERTICAL';
       celda.primaryAxisSizingMode = 'AUTO';
@@ -577,20 +1168,50 @@ function crearTabla(tabla: TablaCard, anchoDisponible: number, lang: Idioma): Sc
       celda.paddingTop = celda.paddingBottom = 6;
       celda.paddingLeft = celda.paddingRight = 8;
       celda.fills = [];
-      const negrita = construirNegritas(valor);
-      const texto = figma.createText();
-      texto.fontName = esHeader ? FUENTE_BOLD : FUENTE_REGULAR;
-      texto.fontSize = 12;
-      texto.characters = negrita.texto;
-      if (!esHeader) {
-        for (const r of negrita.rangos) texto.setRangeFontName(r.inicio, r.fin, FUENTE_BOLD);
+
+      // fila de leyenda: ícono sí o sí en la columna "Forma", con su color
+      const spec = esLeyenda && !esHeader && col === 1 ? iconoDeElemento(valores[0]) : null;
+      if (spec) {
+        const textoSinToken = construirRico(valor.replace(REGEX_TOKEN_FORMA, '').trim());
+        const filaIcono = figma.createFrame();
+        filaIcono.layoutMode = 'HORIZONTAL';
+        filaIcono.primaryAxisSizingMode = 'AUTO';
+        filaIcono.counterAxisSizingMode = 'AUTO';
+        filaIcono.counterAxisAlignItems = 'CENTER';
+        filaIcono.itemSpacing = 6;
+        filaIcono.fills = [];
+        if (textoSinToken.texto.trim().length > 0) {
+          filaIcono.appendChild(textoConFormatos(textoSinToken.texto, textoSinToken.negritas, textoSinToken.codigo, 12));
+        }
+        filaIcono.appendChild(crearIconoForma(spec.forma, comps!, { fill: spec.fill, stroke: spec.stroke }));
+        celda.appendChild(filaIcono);
+        fila.appendChild(celda);
+        return;
       }
-      texto.fills = [{ type: 'SOLID', color: { r: 0.2, g: 0.2, b: 0.22 } }];
-      celda.appendChild(texto);
-      texto.layoutAlign = 'STRETCH';
-      texto.textAutoResize = 'HEIGHT';
+
+      const rico = construirRico(valor);
+      const token = !esHeader && comps ? rico.texto.match(REGEX_TOKEN_FORMA) : null;
+      if (token && token.index !== undefined) {
+        // celda con token de forma → texto + ícono real en fila horizontal
+        celda.appendChild(crearFilaConIcono(rico, token, comps!, 12, ''));
+      } else {
+        const texto = figma.createText();
+        texto.fontName = esHeader ? FUENTE_BOLD : FUENTE_REGULAR;
+        texto.fontSize = 12;
+        texto.characters = rico.texto;
+        if (!esHeader) {
+          for (const r of rico.negritas) texto.setRangeFontName(r.inicio, r.fin, FUENTE_BOLD);
+          if (FUENTE_MONO) {
+            for (const r of rico.codigo) texto.setRangeFontName(r.inicio, r.fin, FUENTE_MONO);
+          }
+        }
+        texto.fills = [{ type: 'SOLID', color: { r: 0.2, g: 0.2, b: 0.22 } }];
+        celda.appendChild(texto);
+        texto.layoutAlign = 'STRETCH';
+        texto.textAutoResize = 'HEIGHT';
+      }
       fila.appendChild(celda);
-    }
+    });
     contenedor.appendChild(fila);
   };
 

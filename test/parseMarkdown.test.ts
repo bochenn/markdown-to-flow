@@ -7,7 +7,9 @@ import {
   buscarSeccion,
   contenidoALineas,
   construirNegritas,
+  construirRico,
   analizarDocumento,
+  esResumenFlow,
 } from '../src/parseMarkdown.ts';
 
 const md = readFileSync(new URL('../Resources/user-flow-compra-jeans-invitado.md', import.meta.url), 'utf8');
@@ -55,6 +57,30 @@ test('construirNegritas resuelve rangos y tolera ** sin cerrar', () => {
   assert.equal(roto.texto, 'texto **sin cierre');
   assert.equal(roto.rangos.length, 0);
   assert.equal(roto.malCerrado, true);
+});
+
+test('construirRico: quita backticks, marca rangos de código y convive con la negrita', () => {
+  const simple = construirRico('Estadio `([ ])` en verde');
+  assert.equal(simple.texto, 'Estadio ([ ]) en verde');
+  assert.deepEqual(simple.codigo.map((r) => simple.texto.slice(r.inicio, r.fin)), ['([ ])']);
+  assert.equal(simple.negritas.length, 0);
+
+  // combinado: **`((CO))`** → ambos formatos sobre el mismo rango, sin backticks ni asteriscos
+  const combinado = construirRico('**`((CO))`** → **Checkout / opciones**');
+  assert.equal(combinado.texto, '((CO)) → Checkout / opciones');
+  assert.deepEqual(combinado.codigo.map((r) => combinado.texto.slice(r.inicio, r.fin)), ['((CO))']);
+  assert.deepEqual(combinado.negritas.map((r) => combinado.texto.slice(r.inicio, r.fin)), ['((CO))', 'Checkout / opciones']);
+
+  // backtick sin cerrar → texto plano, sin romper la línea (ni la negrita ya resuelta)
+  const roto = construirRico('**ok** y `sin cerrar queda igual');
+  assert.equal(roto.texto, 'ok y `sin cerrar queda igual');
+  assert.equal(roto.codigo.length, 0);
+  assert.deepEqual(roto.negritas, [{ inicio: 0, fin: 2 }]);
+});
+
+test('la leyenda de conectores también limpia los backticks de la descripción', () => {
+  const doc = analizarDocumento('- `((XX))` → `Pantalla` de **pago**\n');
+  assert.equal(doc.leyendaConectores.XX, 'Pantalla de pago');
 });
 
 test('regression: el .md original produce las mismas 6 cards en orden vía analizarDocumento', () => {
@@ -155,6 +181,26 @@ test('flujos FLW0N: heading-con-diagrama, numeración limpiada y scope por nivel
   // la sección que ES el heading del flujo lleva su propio flujo
   const seccionFlujo1 = porTitulo.get('1. Flujo principal (happy path)');
   if (seccionFlujo1) assert.equal(seccionFlujo1.flujo!.id, 'FLW01');
+
+  // los headings de flujo NO pasan por el clasificador de alias: "edge cases"
+  // o "errores" en el título del flujo no los convierte en sección conocida
+  for (const titulo of ['3. Flujo de edge cases', '4. Flujo de errores del sistema', '5. Flujo de errores del usuario']) {
+    const s = porTitulo.get(titulo)!;
+    assert.equal(s.tipo, 'generica', `"${titulo}" debería ser generica`);
+    assert.ok(s.flujo !== null);
+  }
+});
+
+test('esResumenFlow: reconoce la sección Flow clásica y los metadatos bajo el H1', () => {
+  const doc = analizarDocumento(edgeMd);
+  const titulo = doc.secciones.find((s) => s.tipo === 'titulo')!;
+  assert.ok(esResumenFlow(titulo)); // "**User story:** ..." etc. como texto corrido
+
+  const docMd = analizarDocumento(md);
+  const flow = docMd.secciones.find((s) => s.tipo === 'flow')!;
+  assert.ok(esResumenFlow(flow));
+  const steps = docMd.secciones.find((s) => s.tipo === 'steps')!;
+  assert.ok(!esResumenFlow(steps));
 });
 
 test('un solo flujo: todo el contenido pertenece a FLW01 (prefijo siempre)', () => {
