@@ -15,6 +15,14 @@
   #status { white-space: pre-wrap; }
   #status.error { color: var(--figma-color-text-danger, #c33); }
   .ayuda { margin: 0; color: var(--figma-color-text-secondary, #777); }
+  .panel { display: flex; flex-direction: column; gap: 12px; }
+  .oculto { display: none; }
+  #panelAbout h3 { font-size: 13px; margin: 0; }
+  #panelAbout h4 { font-size: 12px; margin: 8px 0 0; }
+  #panelAbout p, #panelAbout ul { margin: 0; }
+  #panelAbout ul { padding-left: 16px; }
+  #panelAbout a { color: var(--figma-color-text-brand, #0d99ff); cursor: pointer; text-decoration: none; }
+  #panelAbout a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -22,22 +30,38 @@
        storage limpio se ve en inglés sin re-render ni parpadeo -->
   <h2 id="tituloPanel">Markdown → Flow diagram</h2>
 
-  <fig-field>
-    <label for="archivo" id="labelArchivo">User flow file (.md, .markdown or .txt)</label>
-    <!-- input nativo: el file picker de FigUI3 está orientado a imágenes -->
-    <input type="file" id="archivo" accept=".md,.markdown,.txt">
-  </fig-field>
-  <p class="ayuda" id="ayudaArchivo">An exact structure isn't required: the plugin will generate the best it can from whatever it finds.</p>
-  <fig-button id="descargarEjemplo">Download example markdown</fig-button>
+  <!-- fig-tab-content de FigUI3 es inerte: el switching de paneles es manual,
+       escuchando el change de fig-tabs -->
+  <fig-tabs id="tabs" value="input">
+    <fig-tab value="input" selected="true"><span id="tabInput">Input</span></fig-tab>
+    <fig-tab value="options"><span id="tabOptions">Options</span></fig-tab>
+    <fig-tab value="about"><span id="tabAbout">About</span></fig-tab>
+  </fig-tabs>
 
-  <fig-field>
-    <label id="labelPegar">…or paste the content here</label>
-    <fig-input-text multiline id="texto" placeholder="flowchart TD&#10;    A([Start]) --> B[Step]"></fig-input-text>
-  </fig-field>
+  <div id="panelInput" class="panel">
+    <fig-field>
+      <label for="archivo" id="labelArchivo">User flow file (.md, .markdown or .txt)</label>
+      <!-- input nativo: el file picker de FigUI3 está orientado a imágenes -->
+      <input type="file" id="archivo" accept=".md,.markdown,.txt">
+    </fig-field>
+    <fig-field>
+      <label id="labelPegar">…or paste the content here</label>
+      <fig-input-text multiline id="texto" placeholder="flowchart TD&#10;    A([Start]) --> B[Step]"></fig-input-text>
+    </fig-field>
+    <p class="ayuda" id="ayudaArchivo">Upload a .md, .markdown or .txt file, or paste the content. An exact structure isn't required — the plugin does its best with whatever it finds.</p>
+    <fig-button id="descargarEjemplo">Download example markdown</fig-button>
+    <p class="ayuda" id="ayudaEjemplo">Don't have a file? Download a ready-made example to see the expected format.</p>
+    <fig-button variant="primary" id="generar">Generate</fig-button>
+    <div id="status"></div>
+  </div>
 
+  <div id="panelOptions" class="panel oculto">
   <fig-switch id="docs" checked><span id="textoDocs">Also generate documentation cards (steps, decisions, assumptions, etc.)</span></fig-switch>
+  <p class="ayuda" id="ayudaDocs">Creates cards with the flow's written content (steps, decisions, assumptions) alongside the diagram.</p>
   <fig-switch id="edgeCases"><span id="textoEdgeCases">Separate edge cases and errors into their own flow</span></fig-switch>
+  <p class="ayuda" id="ayudaEdgeCases">Moves error and edge-case nodes into their own area to keep the main flow clean.</p>
   <fig-switch id="repetirFlow"><span id="textoRepetirFlow">Repeat flow summary card at the start of each flow</span></fig-switch>
+  <p class="ayuda" id="ayudaRepetirFlow">Places a small copy of the flow summary at the start of each flow for quick context.</p>
 
   <fig-field direction="horizontal">
     <label for="layoutStyle" id="labelLayout">Layout style</label>
@@ -48,6 +72,7 @@
       <option value="table">Table</option>
     </fig-dropdown>
   </fig-field>
+  <p class="ayuda" id="ayudaLayout">How dense flows are arranged: Classic flowchart, independent Cards, Swimlanes by re-entry point, or a Table of cases.</p>
 
   <div id="opcionesSwimlanes">
     <fig-field direction="horizontal">
@@ -74,6 +99,7 @@
   </div>
 
   <fig-switch id="soloDensos" checked><span id="textoSoloDensos">Apply simplified layout only to dense flows</span></fig-switch>
+  <p class="ayuda" id="ayudaSoloDensos">Simple, linear flows stay as a Classic flowchart even when another layout style is selected.</p>
 
   <fig-field direction="horizontal">
     <label for="direccion" id="labelDireccion">Flow direction</label>
@@ -82,6 +108,7 @@
       <option value="horizontal">Horizontal</option>
     </fig-dropdown>
   </fig-field>
+  <p class="ayuda" id="ayudaDireccion">Whether the diagram grows top-to-bottom (Vertical) or left-to-right (Horizontal).</p>
 
   <fig-field direction="horizontal">
     <label for="idioma" id="labelIdioma">Output language</label>
@@ -90,9 +117,37 @@
       <option value="es">Español</option>
     </fig-dropdown>
   </fig-field>
+  <p class="ayuda" id="ayudaIdioma">Language for the plugin interface and the labels it generates on the canvas (not your file's content, which is kept as-is).</p>
+  </div>
 
-  <fig-button variant="primary" id="generar">Generate</fig-button>
-  <div id="status"></div>
+  <div id="panelAbout" class="panel oculto">
+    <h3>Markdown to Flow</h3>
+    <p id="aboutResumen">Turns Markdown user flows with Mermaid diagrams into editable flow diagrams and documentation cards, natively in Figma and FigJam. Upload or paste your flow, pick your options, and generate a structured, editable result on the canvas.</p>
+
+    <h4 id="aboutRecursosTitulo">Resources used</h4>
+    <ul>
+      <li><a data-url="https://github.com/rogie/figui3">FigUI3</a> — <span id="aboutRecursoFigui">native-style UI components for the plugin panel</span></li>
+      <li><a data-url="https://mermaid.js.org/syntax/flowchart.html">Mermaid flowchart syntax</a> — <span id="aboutRecursoMermaid">the diagram source format the plugin parses (with its own parser, no runtime dependency)</span></li>
+      <li><a data-url="https://developers.figma.com/docs/plugins/">Figma Plugin API</a> — <span id="aboutRecursoFigma">typings and canvas APIs (built with esbuild; no other runtime dependencies)</span></li>
+    </ul>
+
+    <h4 id="aboutOpenSourceTitulo">Open source</h4>
+    <p><span id="aboutOpenSourceTexto">This is an open-source plugin, licensed under MIT. You're free to modify and improve it — if you do, please let me know and credit the original plugin in your version.</span> <a data-url="https://github.com/bochenn/markdown-to-flow" id="aboutRepoLink">View the source</a></p>
+
+    <h4 id="aboutFeedbackTitulo">Feedback &amp; feature requests</h4>
+    <p id="aboutFeedbackTexto">Ideas, improvement suggestions and feature requests are very welcome. Reach out and tell me what would make this more useful for your workflow.</p>
+
+    <h4 id="aboutCreatorTitulo">Creator</h4>
+    <p id="aboutCreatorTexto">Created and maintained by Leandro Henflen.</p>
+    <ul>
+      <li><a data-url="https://crafter.studio">crafter.studio</a></li>
+      <li><a data-url="https://x.com/bochenn">x.com/bochenn</a></li>
+      <li><a data-url="https://www.linkedin.com/in/bochenn">linkedin.com/in/bochenn</a></li>
+    </ul>
+
+    <h4 id="aboutSupportTitulo">Support the project</h4>
+    <p><span id="aboutSupportTexto">If it saves you time, a donation helps keep the development going:</span> <a data-url="https://buymeacoffee.com/bochenn">buymeacoffee.com/bochenn</a></p>
+  </div>
 
 <!-- FIGUI3:JS -->
 <script>
@@ -102,9 +157,34 @@
     en: {
       tituloPanel: 'Markdown → Flow diagram',
       labelArchivo: 'User flow file (.md, .markdown or .txt)',
-      ayudaArchivo: "An exact structure isn't required: the plugin will generate the best it can from whatever it finds.",
+      ayudaArchivo: "Upload a .md, .markdown or .txt file, or paste the content. An exact structure isn't required — the plugin does its best with whatever it finds.",
       labelPegar: '…or paste the content here',
       descargarEjemplo: 'Download example markdown',
+      ayudaEjemplo: "Don't have a file? Download a ready-made example to see the expected format.",
+      tabInput: 'Input',
+      tabOptions: 'Options',
+      tabAbout: 'About',
+      ayudaDocs: "Creates cards with the flow's written content (steps, decisions, assumptions) alongside the diagram.",
+      ayudaEdgeCases: 'Moves error and edge-case nodes into their own area to keep the main flow clean.',
+      ayudaRepetirFlow: 'Places a small copy of the flow summary at the start of each flow for quick context.',
+      ayudaLayout: 'How dense flows are arranged: Classic flowchart, independent Cards, Swimlanes by re-entry point, or a Table of cases.',
+      ayudaSoloDensos: 'Simple, linear flows stay as a Classic flowchart even when another layout style is selected.',
+      ayudaDireccion: 'Whether the diagram grows top-to-bottom (Vertical) or left-to-right (Horizontal).',
+      ayudaIdioma: "Language for the plugin interface and the labels it generates on the canvas (not your file's content, which is kept as-is).",
+      aboutResumen: 'Turns Markdown user flows with Mermaid diagrams into editable flow diagrams and documentation cards, natively in Figma and FigJam. Upload or paste your flow, pick your options, and generate a structured, editable result on the canvas.',
+      aboutRecursosTitulo: 'Resources used',
+      aboutRecursoFigui: 'native-style UI components for the plugin panel',
+      aboutRecursoMermaid: 'the diagram source format the plugin parses (with its own parser, no runtime dependency)',
+      aboutRecursoFigma: 'typings and canvas APIs (built with esbuild; no other runtime dependencies)',
+      aboutOpenSourceTitulo: 'Open source',
+      aboutOpenSourceTexto: "This is an open-source plugin, licensed under MIT. You're free to modify and improve it — if you do, please let me know and credit the original plugin in your version.",
+      aboutRepoLink: 'View the source',
+      aboutFeedbackTitulo: 'Feedback & feature requests',
+      aboutFeedbackTexto: 'Ideas, improvement suggestions and feature requests are very welcome. Reach out and tell me what would make this more useful for your workflow.',
+      aboutCreatorTitulo: 'Creator',
+      aboutCreatorTexto: 'Created and maintained by Leandro Henflen.',
+      aboutSupportTitulo: 'Support the project',
+      aboutSupportTexto: 'If it saves you time, a donation helps keep the development going:',
       textoDocs: 'Also generate documentation cards (steps, decisions, assumptions, etc.)',
       textoEdgeCases: 'Separate edge cases and errors into their own flow',
       textoRepetirFlow: 'Repeat flow summary card at the start of each flow',
@@ -126,9 +206,34 @@
     es: {
       tituloPanel: 'Markdown → Diagrama de flujo',
       labelArchivo: 'Archivo de user flow (.md, .markdown o .txt)',
-      ayudaArchivo: 'No hace falta una estructura exacta: el plugin genera lo mejor posible con lo que encuentre.',
+      ayudaArchivo: 'Subí un archivo .md, .markdown o .txt, o pegá el contenido. No hace falta una estructura exacta: el plugin genera lo mejor posible con lo que encuentre.',
       labelPegar: '…o pegá el contenido acá',
       descargarEjemplo: 'Descargar markdown de ejemplo',
+      ayudaEjemplo: '¿No tenés un archivo? Descargá un ejemplo listo para ver el formato esperado.',
+      tabInput: 'Entrada',
+      tabOptions: 'Opciones',
+      tabAbout: 'Acerca de',
+      ayudaDocs: 'Crea cards con el contenido escrito del flujo (steps, decisiones, assumptions) junto al diagrama.',
+      ayudaEdgeCases: 'Mueve los nodos de error y edge cases a su propia zona para mantener limpio el flujo principal.',
+      ayudaRepetirFlow: 'Pone una copia chica del resumen del flujo al inicio de cada flujo, como contexto rápido.',
+      ayudaLayout: 'Cómo se organizan los flujos densos: flowchart Classic, Cards independientes, Swimlanes por punto de reingreso, o una Table de casos.',
+      ayudaSoloDensos: 'Los flujos simples y lineales quedan como flowchart Classic aunque haya otro estilo elegido.',
+      ayudaDireccion: 'Si el diagrama crece de arriba hacia abajo (Vertical) o de izquierda a derecha (Horizontal).',
+      ayudaIdioma: 'Idioma de la interfaz del plugin y de las etiquetas que genera en el canvas (no del contenido de tu archivo, que se conserva tal cual).',
+      aboutResumen: 'Convierte user flows en Markdown con diagramas Mermaid en diagramas de flujo y cards de documentación editables, nativo en Figma y FigJam. Subí o pegá tu flujo, elegí las opciones y generá un resultado estructurado y editable en el canvas.',
+      aboutRecursosTitulo: 'Recursos utilizados',
+      aboutRecursoFigui: 'componentes de UI con estilo nativo para el panel del plugin',
+      aboutRecursoMermaid: 'el formato de origen de los diagramas que el plugin parsea (con parser propio, sin dependencia en runtime)',
+      aboutRecursoFigma: 'typings y APIs del canvas (buildeado con esbuild; sin otras dependencias en runtime)',
+      aboutOpenSourceTitulo: 'Open source',
+      aboutOpenSourceTexto: 'Este plugin es open source, con licencia MIT. Podés modificarlo y mejorarlo — si lo hacés, avisame y da crédito al plugin original en tu versión.',
+      aboutRepoLink: 'Ver el código',
+      aboutFeedbackTitulo: 'Feedback y pedidos de features',
+      aboutFeedbackTexto: 'Ideas, sugerencias de mejora y pedidos de features son muy bienvenidos. Escribime y contame qué lo haría más útil para tu workflow.',
+      aboutCreatorTitulo: 'Creador',
+      aboutCreatorTexto: 'Creado y mantenido por Leandro Henflen.',
+      aboutSupportTitulo: 'Apoyar el proyecto',
+      aboutSupportTexto: 'Si te ahorra tiempo, una donación ayuda a que el desarrollo siga:',
       textoDocs: 'Generar también cards de documentación (steps, decisiones, assumptions, etc.)',
       textoEdgeCases: 'Separar edge cases y errores en un flujo aparte',
       textoRepetirFlow: 'Repetir la card de resumen del Flow al inicio de cada flujo',
@@ -302,6 +407,28 @@ flowchart TD
     if ('checked' in el) el.checked = !!v;
   };
 
+  // switching manual de paneles: fig-tab-content de FigUI3 es inerte, pero
+  // fig-tabs setea su value al del tab elegido y dispara change
+  const tabs = document.getElementById('tabs');
+  const paneles = {
+    input: document.getElementById('panelInput'),
+    options: document.getElementById('panelOptions'),
+    about: document.getElementById('panelAbout'),
+  };
+  tabs.addEventListener('change', () => {
+    const activo = leerValor(tabs) || 'input';
+    for (const clave in paneles) paneles[clave].classList.toggle('oculto', clave !== activo);
+  });
+
+  // links externos: window.open no es confiable en el iframe del plugin —
+  // se delega al main thread, que llama figma.openExternal con whitelist
+  for (const link of document.querySelectorAll('[data-url]')) {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      parent.postMessage({ pluginMessage: { type: 'abrir-url', url: link.getAttribute('data-url') } }, '*');
+    });
+  }
+
   // los sub-settings de Swimlanes solo se muestran cuando aplica
   function actualizarOpcionesLane() {
     opcionesSwimlanes.style.display = leerValor(selectorLayout) === 'swimlanes' ? 'flex' : 'none';
@@ -316,7 +443,16 @@ flowchart TD
   function aplicarIdioma(lang) {
     idiomaActual = lang;
     const tx = textos();
-    for (const id of ['tituloPanel', 'labelArchivo', 'ayudaArchivo', 'labelPegar', 'descargarEjemplo', 'textoDocs', 'textoEdgeCases', 'textoRepetirFlow', 'labelLayout', 'textoSoloDensos', 'labelLaneReingreso', 'labelLaneAgrupacion', 'labelLaneOrientacion', 'labelDireccion', 'labelIdioma']) {
+    for (const id of ['tituloPanel', 'tabInput', 'tabOptions', 'tabAbout',
+      'labelArchivo', 'ayudaArchivo', 'labelPegar', 'descargarEjemplo', 'ayudaEjemplo',
+      'textoDocs', 'ayudaDocs', 'textoEdgeCases', 'ayudaEdgeCases', 'textoRepetirFlow', 'ayudaRepetirFlow',
+      'labelLayout', 'ayudaLayout', 'textoSoloDensos', 'ayudaSoloDensos',
+      'labelLaneReingreso', 'labelLaneAgrupacion', 'labelLaneOrientacion',
+      'labelDireccion', 'ayudaDireccion', 'labelIdioma', 'ayudaIdioma',
+      'aboutResumen', 'aboutRecursosTitulo', 'aboutRecursoFigui', 'aboutRecursoMermaid', 'aboutRecursoFigma',
+      'aboutOpenSourceTitulo', 'aboutOpenSourceTexto', 'aboutRepoLink',
+      'aboutFeedbackTitulo', 'aboutFeedbackTexto', 'aboutCreatorTitulo', 'aboutCreatorTexto',
+      'aboutSupportTitulo', 'aboutSupportTexto']) {
       document.getElementById(id).textContent = tx[id];
     }
     document.getElementById('generar').textContent = tx.generar;

@@ -419,6 +419,18 @@ async function generar(markdown: string, o: Opciones): Promise<{ resumen: string
   return { resumen: partesResumen.join(' '), warnings: avisos };
 }
 
+// URLs que el About de la UI puede pedir abrir (figma.openExternal)
+const URLS_PERMITIDAS = [
+  'https://github.com/rogie/figui3',
+  'https://mermaid.js.org/syntax/flowchart.html',
+  'https://developers.figma.com/docs/plugins/',
+  'https://github.com/bochenn/markdown-to-flow',
+  'https://crafter.studio',
+  'https://x.com/bochenn',
+  'https://www.linkedin.com/in/bochenn',
+  'https://buymeacoffee.com/bochenn',
+];
+
 figma.ui.onmessage = async (msg: {
   type: string;
   markdown?: string;
@@ -433,12 +445,19 @@ figma.ui.onmessage = async (msg: {
   laneOrientacion?: string;
   lang?: string;
   nombreArchivo?: string;
+  url?: string;
 }) => {
   const lang: Idioma = msg.lang === 'es' ? 'es' : 'en';
 
   // el idioma persiste apenas se cambia, aunque no se genere nada
   if (msg.type === 'cambiar-idioma') {
     figma.clientStorage.setAsync(CLAVE_IDIOMA, lang);
+    return;
+  }
+  // links del About: solo URLs conocidas (no abrir cualquier cosa que llegue
+  // por mensaje); figma.openExternal es el único camino confiable desde la UI
+  if (msg.type === 'abrir-url') {
+    if (msg.url && URLS_PERMITIDAS.indexOf(msg.url) !== -1) figma.openExternal(msg.url);
     return;
   }
   if (msg.type !== 'generar') return;
