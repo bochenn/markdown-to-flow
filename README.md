@@ -1,265 +1,264 @@
 # Markdown to Flow
 
-Plugin para **Figma Design y FigJam** que toma un archivo de user flow
-(`.md`, `.markdown` o `.txt` — cualquier texto plano sirve), extrae el
-diagrama Mermaid de donde esté y lo convierte en nodos conectados, más
-**cards de documentación** con el contenido de las secciones del documento.
+Plugin for **Figma Design and FigJam** that takes a user flow file
+(`.md`, `.markdown` or `.txt` — any plain text works), extracts the Mermaid
+diagram from wherever it is and turns it into connected nodes, plus
+**documentation cards** with the content of the document's sections.
 
-El parseo es **tolerante a estructura variable**: no hace falta que el archivo
-siga un formato exacto — el plugin genera lo mejor posible con lo que haya.
+Parsing is **tolerant to variable structure**: the file doesn't need to
+follow an exact format — the plugin generates the best it can from whatever
+it finds.
 
-- **Diagramas**: se buscan en todo el archivo, independiente de headings —
-  primero bloques ```` ```mermaid ```` cercados; si no hay, bloques sin cercar
-  que empiecen con `flowchart TD`/`graph LR`/etc. **Cada bloque genera su
-  propio diagrama** en su propio Section (nombrado con el heading más cercano
-  cuando hay más de uno), apilados en orden de aparición. Sin diagrama no es
-  error: se generan solo las cards.
-- **Secciones**: cascada de estrategias — headings ATX (`#`, `##`…) → Setext
-  (texto subrayado con `===`/`---`) → líneas etiqueta (línea corta y sola, en
-  MAYÚSCULAS o terminada en `:`) → sin estructura (una única card con todo).
-  Cualquier heading genera su card; los que matchean los alias conocidos
-  (título, flow/resumen, steps/pasos, decision, edge cases/errores/alternate,
-  assumptions/supuestos — normalizados sin tildes) reciben su formateo
-  especial. Los pares `Clave: valor` sin negrita markdown se marcan en bold igual.
+- **Diagrams**: searched across the whole file, regardless of headings —
+  fenced ```` ```mermaid ```` blocks first; if there are none, unfenced blocks
+  starting with `flowchart TD`/`graph LR`/etc. **Each block generates its own
+  diagram** in its own Section (named after the closest heading when there is
+  more than one), stacked in order of appearance. No diagram is not an error:
+  only the cards are generated.
+- **Sections**: a cascade of strategies — ATX headings (`#`, `##`…) → Setext
+  (text underlined with `===`/`---`) → label lines (a short line on its own,
+  in UPPERCASE or ending with `:`) → no structure (a single card with
+  everything). Any heading generates its card; those matching the known
+  aliases (title, flow/summary, steps, decision, edge cases/errors/alternate,
+  assumptions — normalized without accents) get their special formatting.
+  `Key: value` pairs without markdown bold are bolded anyway.
 
-- Cada nodo tiene la **forma de su tipo mermaid**: `([...])` → óvalo,
-  `[...]` → rectángulo, `{...}` → rombo, `[/.../]` → paralelogramo, y su color
-  sale del `classDef` del propio mermaid (con default por forma si no tiene clase).
-- En **Figma Design**: un único **Component Set `user-flow-elements`** (borde
-  dashed `#6F3ECD`, autolayout horizontal con padding 16 y gap 32) con 7
-  variantes (`Type=Start / End` círculo,
-  `Type=Process`, `Type=Decision`, `Type=Options / Input`, `Type=Connector`,
-  `Type=Label` y `Type=Annotation` — la nota amarilla de reingreso, 200px de
-  ancho con alto hug) en el Section "🧩 Base components"; los **tokens de
-  notación** de la leyenda (`([ ])`, `[ ]`, `{ }`, `((CO))`) se renderizan
-  como **íconos reales de 24px** (instances; los `((CO))` con sus iniciales
-  adentro), la card de leyenda suma una **subsección "Conectores"** generada
-por el plugin (muestra dibujada + descripción en el idioma del panel: sólida
-`#9747FF`, salto largo `#0D99FF`, punteada de edge case y el badge de label),
-la tabla de leyenda mapea **cada fila por su "Elemento"** al ícono
-  y color correspondientes (éxito verde, error rojo, reingreso gris) y las
-  cards con tablas anchas se ensanchan solas. Los conectores simulados llevan
-  **círculo relleno al inicio y flecha al final** (geometría equivalente a los
-  caps `CIRCLE_FILLED`/`ARROW_LINES`, que la API solo permite por vértice de
-  `vectorNetwork`, incompatible con los codos curvos); cada nodo es una
-  **Instance** de su variante — editar una variante propaga a sus instancias,
-  y el tipo/forma de cualquier instancia puede cambiarse a mano con el
-  selector de variante nativo de Figma. Los **conectores rutean en codo**
-  (elbow): en FigJam con `connectorLineType: 'ELBOWED'` + `magnet: 'AUTO'`
-  nativos (el redondeo del codo lo dibuja el editor — `cornerRadius` del
-  conector es readonly en la API); en Design con un trazado simulado de
-  tramos en ángulo recto y esquinas redondeadas (radio 8, adaptativo en
-  tramos cortos), anclado al borde más cercano — recta simple si los nodos
-  están alineados, y los retornos rodean por la derecha sin atravesar la
-  columna. El badge del label se centra a mitad de la longitud del recorrido.
-  **Evitación de obstáculos**: si la ruta default de un conector cruza el
-  bounding box de un nodo ajeno, se desvía por un carril lateral fuera del
-  diagrama (lado más cercano a los endpoints; cada uso corre el carril 16px;
-  bandas de entrada/salida con 24px de margen empujadas fuera de los nodos).
-  En FigJam la API no tiene waypoints (limitación conocida): la mitigación es
-  forzar `magnet LEFT/RIGHT` del lado del carril en esos conectores de salto
-  largo. Los **tramos horizontales que comparten franja se separan +24px**
-  (registro de franjas ocupadas, orden de creación, re-chequeando obstáculos)
-  — así los conectores que viajan juntos se ven como líneas paralelas y sus
-  badges no se apilan (los labels heredan el offset de su propia ruta, también
-  en FigJam). Los obstáculos incluyen **nodos + anotaciones + badges ya
-  creados** (cada badge se registra al crearse); las rutas rectas registran su
-  franja y hacen U-jog si pisan una ocupada; el desvío **evalúa ambos
-  carriles** (menos colisiones, luego el más corto) y el margen de detección
-  de 12px hace que rozar un borde cuente como cruce. Constantes en
+- Each node gets the **shape of its mermaid type**: `([...])` → oval,
+  `[...]` → rectangle, `{...}` → diamond, `[/.../]` → parallelogram, and its
+  color comes from the mermaid's own `classDef` (with a per-shape default when
+  it has no class).
+- In **Figma Design**: a single **Component Set `user-flow-elements`** (dashed
+  `#6F3ECD` border, horizontal autolayout with padding 16 and gap 32) with 7
+  variants (`Type=Start / End` circle, `Type=Process`, `Type=Decision`,
+  `Type=Options / Input`, `Type=Connector`, `Type=Label` and
+  `Type=Annotation` — the yellow re-entry note, 200px wide with hug height)
+  inside the "🧩 Base components" Section; the legend's **notation tokens**
+  (`([ ])`, `[ ]`, `{ }`, `((CO))`) render as **real 24px icons** (instances;
+  `((CO))` tokens with their initials inside), the legend card adds a
+  plugin-generated **"Connectors" subsection** (drawn sample + description in
+  the panel language: solid `#9747FF`, long jump `#0D99FF`, dashed edge case
+  and the label badge), the legend table maps **each row by its "Element"
+  column** to the matching icon and color (success green, error red, re-entry
+  gray), and cards with wide tables widen themselves. Simulated connectors
+  carry a **filled circle at the start and an arrow at the end** (geometry
+  equivalent to the `CIRCLE_FILLED`/`ARROW_LINES` caps, which the API only
+  allows per `vectorNetwork` vertex — incompatible with the curved elbows);
+  each node is an **Instance** of its variant — editing a variant propagates
+  to its instances, and any instance's type/shape can be changed by hand with
+  Figma's native variant selector. **Connectors route with elbows**: in
+  FigJam with native `connectorLineType: 'ELBOWED'` + `magnet: 'AUTO'` (the
+  editor draws the corner rounding — the connector's `cornerRadius` is
+  readonly in the API); in Design with a simulated right-angle path with
+  rounded corners (radius 8, adaptive on short segments), anchored to the
+  nearest edge — a simple straight line when nodes are aligned, and returns
+  go around the right side without crossing the column. The label badge is
+  centered at half the path length. **Obstacle avoidance**: if a connector's
+  default route crosses another node's bounding box, it detours through a
+  side lane outside the diagram (the side closest to the endpoints; each use
+  shifts the lane; entry/exit bands with a 24px margin pushed clear of the
+  nodes). In FigJam the API has no waypoints (known limitation): the
+  mitigation is forcing `magnet LEFT/RIGHT` on the lane side for those
+  long-jump connectors. **Horizontal segments sharing a band get separated
+  +24px** (occupied-band registry, creation order, re-checking obstacles) —
+  so connectors traveling together look like parallel lines and their badges
+  don't stack (labels inherit their own route's offset, in FigJam too).
+  Obstacles include **nodes + annotations + already-created badges** (each
+  badge registers itself on creation); straight routes register their band
+  and U-jog if they step on an occupied one; the detour **evaluates both
+  lanes** (fewest collisions, then shortest) and the 12px detection margin
+  makes grazing an edge count as a crossing. Constants in
   `src/connectorStyle.ts`.
-- En **FigJam**: la API **no soporta components** (`figma.createComponent` es
-  *"only available in Figma Design"* y `createInstance` tira error en FigJam,
-  según la documentación oficial). En vez del fallback con `clone()`, se usa
-  `figma.createShapeWithText()` nativo, cuyo `shapeType` trae exactamente las
-  4 formas (`ELLIPSE`, `ROUNDED_RECTANGLE`, `DIAMOND`, `PARALLELOGRAM_RIGHT`),
-  con texto integrado y magnets para los conectores nativos. **En FigJam no hay
-  maestro: editar un nodo no propaga al resto** (limitación de la plataforma).
-  El branching por `figma.editorType` vive solo en `src/renderFigma.ts`.
-- Las **cards de documentación** (`createSectionCard()`) son frames comunes,
-  idénticos en los dos editores: título, Flow (metadatos), Steps, Decision
-  points, Alternate paths y Assumptions, con negritas reales
-  (`setRangeFontName`). Se agrupan en un Section `"Documentación"`, en columna
-  a la izquierda del Section `"Diagrama de flujo"`.
-- **Idioma configurable (English/Español, default English)** para la UI del
-  panel y las etiquetas que el plugin escribe en el canvas (nombres de
-  Sections, headers canónicos de cards conocidas, componentes base). El
-  **contenido extraído del archivo nunca se traduce**: nodos, bodies de cards
-  y headings genéricos se muestran tal cual vienen. Las cards de Título y
-  Flow conservan el heading original del archivo como header (es contenido
-  del usuario); Steps/Decision points/Edge cases/Assumptions usan el header
-  canónico traducido. Diccionario en `src/i18n.ts` (`t(clave, lang, vars)`,
-  fallback a inglés, extensible a más idiomas); los textos de la UI viven
-  duplicados en `ui.html` porque el iframe no tiene bundler — mantener
-  sincronía. El idioma persiste apenas se cambia el selector.
-- **Identificador `FLW0N` por flujo**: cada heading que agrupa un diagrama es
-  un flujo (`FLW01`, `FLW02`… en orden; detección semántica, independiente
-  del formato de numeración — `1. X`, `Flujo 1: X`, etc. solo se limpian del
-  título). Las cards de documentación llevan el prefijo de su flujo
-  (`"FLW03 - Flujo de edge cases — Alternate paths..."` — clave cuando hay
-  headings repetidos entre flujos); las secciones globales (antes del primer
-  flujo o al mismo nivel, ej. leyendas o checklists) quedan sin prefijo. Con
-  un solo flujo, todo el contenido pertenece a `FLW01`. Cada Section de
-  diagrama lleva el `flowLabel` como título dentro del canvas, sobre el nodo
-  de inicio.
-- **Leyenda de conectores**: si el archivo tiene líneas tipo
-  `` `((CO))` → Descripción `` (tolerante a backticks, `->`/`→`/`=>`, doble o
-  triple paréntesis), cada aparición de ese nodo conector lleva una anotación
-  con pinta de sticky chico al costado. Ambas sintaxis `((texto))` y
-  `(((texto)))` mapean al tipo conector.
-- **Labels de conectores como badge**: pill negro (padding 6×4, texto blanco
-  12px) en el punto medio entre los nodos, en ambos editores — la línea/flecha
-  no se toca. En FigJam el conector nativo rutea con codos por su cuenta, así
-  que el badge queda en el punto medio geométrico (límite conocido).
-- **Tablas reales en las cards**: las tablas markdown (`| a | b |` +
-  `|---|---|`) se renderizan como tabla nativa (`createTable`/`cellAt`) en
-  FigJam y simulada con frames (celdas de ancho fijo, header con fondo y bold)
-  en Figma Design; filas irregulares se ajustan al header con aviso. Además,
-  los bullets con patrón `CA{N} (descripción) → referencia` se convierten en
-  una tabla de 3 columnas (headers traducidos); el bullet que no matchea va
-  como fila cruda con aviso. El texto alrededor de una tabla se renderiza
-  normal. Todos los `<br>`/`<br/>`/`<br />` del origen se vuelven saltos de
-  línea reales (`normalizeLineBreaks`, aplicado en nodos, labels, cards y celdas).
-- **Estilos de layout** (`Layout style`, persistido): **Classic** (default) —
-  en flujos densos se **descompone en sub-flujos independientes** (`FLW03.1`,
-  `FLW03.2`, …), uno por rama del hub, cada uno en su Section anidada dentro
-  de la Section del flujo padre, en grilla de 3 columnas por tamaños reales;
-  la decisión compartida se omite (el título de la sub-sección nombra el caso
-  y el preámbulo raíz→hub va una vez como encabezado); sin hub razonable →
-  diagrama único con warning; FLW01/02 (simples) siguen como diagrama único.
-  **Cards** — para flujos densos cuya complejidad es
-  topológica ("muchos triggers → decisión compartida → muchos resultados"):
-  detecta el hub (mayor fan-out), muestra el preámbulo raíz→hub una vez y
-  convierte cada rama en una **tarjeta autocontenida** (trigger como título,
-  pasos con mini-íconos, decisiones con opciones etiquetadas y el reingreso
-  como fila verde con el junction — cero conectores cruzando el diagrama;
-  los nodos compartidos entre ramas se duplican por tarjeta). El toggle
-  **"solo flujos densos"** (default activado) aplica el modo elegido
-  únicamente a los flujos con fan-out máximo > 4 (`UMBRAL_FLUJO_DENSO` —
-  FLW01/02 quedan Classic, FLW03/04/05 en Cards); desactivado, aplica a
-  todos. En flujos renderizados como Cards el toggle de "separar edge cases"
-  se ignora con aviso (ya son tarjetas). **Swimlanes**: carriles por punto de
-  reingreso (fondos planos, sin reparenting de conectores) con el mini-flujo
-  Classic real de cada rama adentro (subgrafo + layout compacto), y tres
-  sub-settings persistidos en el panel — *Re-entry style* (junction local o
-  badge de texto), *Lane grouping* (primer reingreso o duplicar la rama en
-  cada carril) y *Lane orientation* (horizontal/vertical). **Table**: una
-  fila por caso — Disparador | Qué hace el sistema | Resultado | Reingresa a
-  (en ramas con decisión, "Resultado" lista todos los desenlaces con su
-  label) — reusando el renderer de tablas (nativa en FigJam, simulada en
-  Design), con headers en el idioma del panel. Los **conectores de salto largo** (desviados por carril) van en
-  `#0D99FF` para distinguirlos de los pasos secuenciales.
-- **Dirección de flujo configurable** (Vertical/Horizontal, default Vertical,
-  persistida): tiene prioridad sobre la dirección del mermaid (que se parsea
-  pero solo se loguea). En horizontal los niveles del BFS van a columnas y la
-  zona de edge cases pasa a estar debajo del flujo (alineada al X de la
-  decisión de origen); la documentación va siempre a la izquierda.
-- **Toggles independientes y combinables** en el panel, persistidos entre
-  sesiones vía `figma.clientStorage`; el diagrama se genera siempre:
-  - **Repetir card de Flow** (desactivado por defecto): con documentación
-    activa y sección Flow detectada, una copia al 70% de la card de resumen
-    se pega arriba del primer nodo del flujo principal (y del de edge cases
-    si existe), como recordatorio de contexto.
-  - **Cards de documentación** (activado por defecto).
-  - **Separar edge cases y errores** (desactivado por defecto): los nodos con
-    clase de la lista `OFF_PATH_CLASSES` (default `['error']`, extensible en
-    `src/layoutDiagram.ts`) salen del happy path — el BFS los excluye como si
-    no existieran, así el flujo principal queda lineal y sin huecos — y van a
-    una columna aparte (derecha en vertical, debajo en horizontal), cada uno a
-    la altura del nodo principal que origina su rama. Todo vive en **una única
-    Section por flujo** (diagrama + edge cases + conectores punteados que los
-    cruzan — dos Sections separadas clipeaban esos conectores), con un título
-    suelto `"Edge cases and errors — {flowLabel}"` sobre el bloque off-path.
-    Los conectores normales van en **#9747FF** (override intencional, ambos
-    editores); el punteado es la única señal de edge case. La paleta de las
-    variantes: Start/End `#CFF7D3/#008043`, Process `#FFF1C2/#FAB815`,
+- In **FigJam**: the API **does not support components**
+  (`figma.createComponent` is *"only available in Figma Design"* and
+  `createInstance` throws in FigJam, per the official docs). Instead of a
+  `clone()` fallback, the plugin uses native `figma.createShapeWithText()`,
+  whose `shapeType` provides exactly the 4 shapes (`ELLIPSE`,
+  `ROUNDED_RECTANGLE`, `DIAMOND`, `PARALLELOGRAM_RIGHT`), with integrated
+  text and magnets for native connectors. **There is no master in FigJam:
+  editing one node does not propagate to the rest** (platform limitation).
+  All `figma.editorType` branching lives in `src/renderFigma.ts`.
+- **Documentation cards** (`createSectionCard()`) are plain frames, identical
+  in both editors: title, Flow (metadata), Steps, Decision points, Alternate
+  paths and Assumptions, with real bold (`setRangeFontName`). They're grouped
+  in a `"Documentation"` Section, in a column to the left of the
+  `"Flow diagram"` Section.
+- **Configurable language (English/Español, default English)** for the panel
+  UI and the labels the plugin writes on the canvas (Section names, canonical
+  headers of known cards, base components). **Content extracted from the file
+  is never translated**: nodes, card bodies and generic headings show up as
+  they come. The Title and Flow cards keep the file's original heading as
+  header (it's user content); Steps/Decision points/Edge cases/Assumptions
+  use the translated canonical header. Dictionary in `src/i18n.ts`
+  (`t(key, lang, vars)`, English fallback, extensible to more languages); the
+  UI texts live duplicated in `ui.html` because the iframe has no bundler —
+  keep them in sync. The language persists as soon as the selector changes.
+- **`FLW0N` identifier per flow**: every heading that groups a diagram is a
+  flow (`FLW01`, `FLW02`… in order; semantic detection, independent of the
+  numbering format — `1. X`, `Flow 1: X`, etc. are only cleaned from the
+  title). Documentation cards carry their flow's prefix
+  (`"FLW03 - Edge cases flow — Alternate paths..."` — key when headings
+  repeat across flows); global sections (before the first flow or at the same
+  level, e.g. legends or checklists) get no prefix. With a single flow, all
+  content belongs to `FLW01`. Each diagram Section shows the `flowLabel` as a
+  title inside the canvas, above the start node.
+- **Connector legend**: if the file has lines like
+  `` `((CO))` → Description `` (tolerant to backticks, `->`/`→`/`=>`, double
+  or triple parentheses), every appearance of that connector node gets a
+  small sticky-looking annotation at its side. Both `((text))` and
+  `(((text)))` syntaxes map to the connector type.
+- **Connector labels as badges**: black pill (6×4 padding, white 12px text)
+  at the midpoint between nodes, in both editors — the line/arrow is left
+  untouched. In FigJam the native connector routes its own elbows, so the
+  badge sits at the geometric midpoint (known limit).
+- **Real tables in cards**: markdown tables (`| a | b |` + `|---|---|`)
+  render as a native table (`createTable`/`cellAt`) in FigJam and simulated
+  with frames (fixed-width cells, header with background and bold) in Figma
+  Design; irregular rows are adjusted to the header with a warning. Also,
+  bullets with the `CA{N} (description) → reference` pattern become a
+  3-column table (translated headers); non-matching bullets go in as raw rows
+  with a warning. Text around a table renders normally. Every
+  `<br>`/`<br/>`/`<br />` from the source becomes a real line break
+  (`normalizeLineBreaks`, applied to nodes, labels, cards and cells).
+- **Layout styles** (`Layout style`, persisted): **Classic** (default) —
+  dense flows are **decomposed into independent sub-flows** (`FLW03.1`,
+  `FLW03.2`, …), one per hub branch, each in its own Section nested inside
+  the parent flow's Section, in a 3-column grid by measured sizes; the shared
+  decision is omitted (the sub-section title names the case and the root→hub
+  preamble appears once as a header); no reasonable hub → single diagram
+  with a warning; FLW01/02 (simple) stay as a single diagram. **Cards** —
+  for dense flows whose complexity is topological ("many triggers → shared
+  decision → many outcomes"): detects the hub (highest fan-out), shows the
+  root→hub preamble once and turns each branch into a **self-contained card**
+  (trigger as title, steps with mini icons, decisions with labeled options
+  and the re-entry as a colored row with the junction — zero connectors
+  crossing the diagram; nodes shared across branches are duplicated per
+  card). The **"dense flows only" toggle** (default on) applies the chosen
+  mode only to flows with max fan-out > 4 (`UMBRAL_FLUJO_DENSO` — FLW01/02
+  stay Classic, FLW03/04/05 get the chosen mode); off, it applies to all.
+  In decomposed flows the "separate edge cases" toggle is ignored with a
+  notice (they're already split). **Swimlanes**: lanes by re-entry point
+  (flat backgrounds, no connector reparenting) with each branch's real
+  Classic mini-flow inside (subgraph + compact layout), plus three persisted
+  panel sub-settings — *Re-entry style* (local junction or text badge),
+  *Lane grouping* (first re-entry or duplicate the branch per lane) and
+  *Lane orientation* (horizontal/vertical). **Table**: one row per case —
+  Trigger | What the system does | Outcome | Re-enters at (in branches with a
+  decision, "Outcome" lists every ending with its label) — reusing the table
+  renderer (native in FigJam, simulated in Design), with headers in the
+  panel language. **Long-jump connectors** (lane-detoured) use `#0D99FF` to
+  tell them apart from sequential steps.
+- **Configurable flow direction** (Vertical/Horizontal, default Vertical,
+  persisted): takes priority over the mermaid's direction (parsed but only
+  logged). In horizontal, BFS levels go to columns and the edge-case zone
+  moves below the flow (aligned to the X of the originating decision);
+  documentation always goes to the left.
+- **Independent, combinable toggles** in the panel, persisted across sessions
+  via `figma.clientStorage`; the diagram is always generated:
+  - **Repeat Flow card** (off by default): with documentation on and a Flow
+    section detected, a 70% copy of the summary card is placed above the
+    first node of the main flow (and of the edge-case block if present), as a
+    context reminder.
+  - **Documentation cards** (on by default).
+  - **Separate edge cases and errors** (off by default): nodes with a class
+    from the `OFF_PATH_CLASSES` list (default `['error']`, extensible in
+    `src/layoutDiagram.ts`) leave the happy path — BFS excludes them as if
+    they didn't exist, so the main flow stays linear and gapless — and go to
+    a separate column (right in vertical, below in horizontal), each at the
+    height of the main node that originates its branch. Everything lives in
+    **a single Section per flow** (diagram + edge cases + the dashed
+    connectors crossing between them — two separate Sections clipped those
+    connectors), with a loose `"Edge cases and errors — {flowLabel}"` title
+    above the off-path block. Normal connectors use **#9747FF** (intentional
+    override, both editors); the dashing is the only edge-case signal. The
+    variant palette: Start/End `#CFF7D3/#008043`, Process `#FFF1C2/#FAB815`,
     Decision `#E5F4FF/#0768CF`, Options/Input `#F1E5FF/#7C2BDA`, Annotation
-    fill `#FFF1C2`; texto `#000000` al 90% de opacidad en todas (en el paint).
-    Los nodos con clase de error usan la paleta roja fija `#FFE2E0/#BD2915`,
-    que pisa la variante y el classDef del archivo. Organización del
-    canvas en **dos pasadas**: cada Section se genera con contenido en
-    coordenadas locales, y con los tamaños reales medidos se apilan los flujos
-    en columna (200px entre bordes) con **Documentation a la izquierda**, que
-    contiene las cards y la Section anidada **"🧩 Base components"** (el
-    Component Set) al final de la columna.
+    fill `#FFF1C2`; text `#000000` at 90% opacity everywhere (in the paint).
+    Nodes with the error class use the fixed red palette `#FFE2E0/#BD2915`,
+    which overrides both the variant and the file's classDef. Canvas
+    organization in **two passes**: each Section is generated with content in
+    local coordinates, and with the real measured sizes the flows are stacked
+    in a column (200px between edges) with **Documentation on the left**,
+    which holds the cards and the nested **"🧩 Base components"** Section
+    (the Component Set) at the end of the column.
 
-## Comandos
+## Commands
 
 ```bash
-npm install        # una sola vez
-npm run build      # genera dist/code.js con esbuild
-npm run watch      # build en modo watch mientras desarrollás
-npm test           # tests del parser y layout (Node puro, sin Figma)
+npm install        # once
+npm run build      # generates dist/code.js with esbuild + dist/ui.html
+npm run watch      # build in watch mode while developing
+npm test           # parser and layout tests (pure Node, no Figma)
 npm run typecheck  # tsc --noEmit
 ```
 
-## Cómo cargarlo en Figma
+## Loading it in Figma
 
 1. `npm install && npm run build`
-2. En Figma o FigJam (app de escritorio): **Plugins → Development → Import plugin from manifest…** y elegir `manifest.json`.
-3. Correr el plugin, subir un `.md` (o pegar el contenido) y apretar **Generar diagrama**.
+2. In Figma or FigJam (desktop app): **Plugins → Development → Import plugin
+   from manifest…** and pick `manifest.json`.
+3. Run the plugin, upload a `.md` (or paste the content) and hit **Generate**.
 
-Archivos de prueba en `Resources/`:
+Test files in `Resources/`:
 
-- `user-flow-compra-jeans-invitado.md` — estructura completa con headings ATX
-- `user-flow-compra-jeans-invitado.txt` — mismo contenido con líneas etiqueta (`STEPS (HAPPY PATH):`) y diagrama sin cercar
-- `user-flow-compra-jeans-invitado_edge.md` — 5 bloques mermaid bajo headings propios y secciones no estándar
-- `notas-sin-estructura.txt` — texto plano sin headings ni diagrama (una única card)
+- `user-flow-compra-jeans-invitado.md` — full structure with ATX headings
+- `user-flow-compra-jeans-invitado.txt` — same content with label lines (`STEPS (HAPPY PATH):`) and an unfenced diagram
+- `user-flow-compra-jeans-invitado_edge.md` — 5 mermaid blocks under their own headings and non-standard sections
+- `notas-sin-estructura.txt` — plain text with no headings and no diagram (a single card)
 
-## Estructura
+## Structure
 
 ```
-src/parseMarkdown.ts  # parser genérico: secciones por heading, líneas de card, negritas (puro)
-src/parseMermaid.ts   # localiza ### Diagram (vía parseMarkdown) y parsea el grafo mermaid (puro)
-src/layoutDiagram.ts  # niveles por BFS (tolera ciclos), minimización de cruces por
-                      # barycenter (Sugiyama, con dummies para edges largos) y
-                      # espaciado adaptativo en niveles densos (puro)
+src/parseMarkdown.ts  # generic parser: sections by heading, card lines, bold (pure)
+src/parseMermaid.ts   # locates ### Diagram (via parseMarkdown) and parses the mermaid graph (pure)
+src/layoutDiagram.ts  # BFS levels (cycle-tolerant), crossing minimization via
+                      # barycenter (Sugiyama, with dummies for long edges) and
+                      # adaptive spacing on dense levels (pure)
 src/renderFigma.ts    # createStickyLike, createConnectorLike, createSectionCard, Sections;
-                      # todo el branching por figma.editorType vive acá
-src/code.ts           # orquestación: mensajería con la UI, toggle, clientStorage, fuentes
-src/ui.html           # UI con componentes FigUI3 (fig-switch, fig-dropdown, fig-button…)
-scripts/build-ui.mjs  # inline de FigUI3 (CSS+JS de node_modules) → dist/ui.html;
-                      # el manifest apunta a dist/ y networkAccess queda en "none"
-test/                 # tests con node:test contra el archivo de ejemplo
+                      # all figma.editorType branching lives here
+src/code.ts           # orchestration: UI messaging, toggles, clientStorage, fonts
+src/ui.html           # UI with FigUI3 components (fig-switch, fig-dropdown, fig-button…)
+scripts/build-ui.mjs  # inlines FigUI3 (CSS+JS from node_modules) → dist/ui.html;
+                      # the manifest points to dist/ and networkAccess stays "none"
+test/                 # node:test tests against the sample files
 ```
 
-La UI usa [FigUI3](https://github.com/rogie/figui3) (estilo nativo de Figma
-UI3, theming light/dark automático vía `--figma-color-*`). Como el manifest
-bloquea la red del iframe (`networkAccess: none`), la librería se bundlea
-localmente en el build en vez de cargarse por CDN — por eso hay que correr
-`npm run build` antes de importar el plugin.
+The UI uses [FigUI3](https://github.com/rogie/figui3) (native Figma UI3
+styling, automatic light/dark theming via `--figma-color-*`). Since the
+manifest blocks the iframe's network (`networkAccess: none`), the library is
+bundled locally at build time instead of loaded from a CDN — which is why
+`npm run build` must run before importing the plugin.
 
-## Sintaxis mermaid soportada (v1)
+## Supported mermaid syntax (v1)
 
-- `flowchart TD` / `graph TD` (la dirección se guarda por si después se soporta `LR`)
-- Formas: `A([inicio/fin])`, `B[proceso]`, `C{decisión}`, `D[/input-output/]`,
-  `E(((conector)))` (círculo doble/junction, variante `Type=Connector`).
-  Formas mermaid no soportadas (hexágono `{{}}`, subrutina `[[]]`, base de
-  datos `[()]`, círculo simple `(())`) caen a rectángulo con warning
-  informativo, **sin perder el edge de la línea**.
-- Edges: `A --> B`, `A -->|label| B`, cadenas `A --> B --> C`
-- Clases: `classDef nombre fill:#...,stroke:#...,color:#...,stroke-dasharray:4 2;`
-  (se aplican fill, stroke, color de texto y borde punteado; el resto se ignora),
-  asignadas inline (`Nodo:::nombre`) o en bloque (`class A,B,C nombre;`).
-  Clase sin `classDef` → color default por forma + aviso.
-- Tamaños discretos por forma (preset corto/largo según el largo del texto,
-  con reducción de fuente 14→12 antes de desbordar el preset grande)
-- Comentarios `%%` ignorados; las líneas no reconocidas generan un aviso, no un crash
+- `flowchart TD` / `graph TD` (the direction is stored in case `LR` is supported later)
+- Shapes: `A([start/end])`, `B[process]`, `C{decision}`, `D[/input-output/]`,
+  `E(((connector)))` (double circle/junction, `Type=Connector` variant).
+  Unsupported mermaid shapes (hexagon `{{}}`, subroutine `[[]]`, database
+  `[()]`, plain circle `(())`) fall back to a rectangle with an informative
+  warning, **without losing the line's edge**.
+- Edges: `A --> B`, `A -->|label| B`, chains `A --> B --> C`
+- Classes: `classDef name fill:#...,stroke:#...,color:#...,stroke-dasharray:4 2;`
+  (fill, stroke, text color and dashed border are applied; the rest is
+  ignored), assigned inline (`Node:::name`) or in block (`class A,B,C name;`).
+  A class without `classDef` → per-shape default color + notice.
+- Discrete sizes per shape (short/long preset by text length, with a 14→12
+  font reduction before overflowing the large preset)
+- `%%` comments ignored; unrecognized lines produce a notice, not a crash
 
-## Secciones de documentación soportadas
+## Supported documentation sections
 
-Cada una se vuelve una card independiente (las ausentes se omiten con un aviso):
+Each becomes an independent card (missing ones are skipped with a notice):
 
-1. **H1** + el blockquote que lo sigue (subtítulo)
-2. **`## Flow:`** (match por prefijo) con la lista de metadatos `- **Campo:** valor`
-3. **`### Steps (happy path)`** — lista numerada
-4. **`### Decision points`** — bullets con sub-bullets indentados (anidamiento >2 se aplana)
+1. **H1** + the blockquote that follows it (subtitle)
+2. **`## Flow:`** (prefix match) with the `- **Field:** value` metadata list
+3. **`### Steps (happy path)`** — numbered list
+4. **`### Decision points`** — bullets with indented sub-bullets (nesting >2 is flattened)
 5. **`### Alternate paths, errors, and edge cases`**
 6. **`### Assumptions and open questions`**
 
-El contenido de cada sección llega hasta el próximo heading de nivel igual o
-superior o un `---`. Negritas `**texto**` se renderizan en bold real, y el
-**código inline** `` `texto` `` se muestra sin backticks y en fuente
-monoespaciada (candidatas: Roboto Mono → Source Code Pro → IBM Plex Mono; si
-ninguna carga, solo se quitan los backticks). Marcadores sin cerrar se dejan
-como texto plano con un warning en consola.
+Each section's content runs until the next heading of equal or higher level
+or a `---`. `**text**` bold renders as real bold, and **inline code**
+`` `text` `` shows without backticks in a monospaced font (candidates:
+Roboto Mono → Source Code Pro → IBM Plex Mono; if none loads, only the
+backticks are removed). Unclosed markers are left as plain text with a
+console warning.
