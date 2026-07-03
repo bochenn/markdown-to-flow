@@ -2,180 +2,396 @@
 <html>
 <head>
 <meta charset="utf-8">
-<!-- FIGUI3:CSS -->
 <style>
-  /* solo layout del panel: los controles los estila FigUI3 (light/dark
-     automático vía las variables --figma-color-* que inyecta Figma) */
-  body { margin: 16px; display: flex; flex-direction: column; gap: 12px; font-family: Inter, sans-serif; font-size: 12px; color: var(--figma-color-text, #333); }
-  h2 { font-size: 14px; margin: 0; }
-  fig-field { display: block; }
-  fig-field label { font-weight: 600; }
-  fig-input-text[multiline] { --fig-input-text-height: 150px; width: 100%; }
-  #opcionesSwimlanes { display: none; flex-direction: column; gap: 12px; }
-  #status { white-space: pre-wrap; }
-  #status.error { color: var(--figma-color-text-danger, #c33); }
-  .ayuda { margin: 0; color: var(--figma-color-text-secondary, #777); }
-  .panel { display: flex; flex-direction: column; gap: 12px; }
-  .oculto { display: none; }
-  #panelAbout h3 { font-size: 13px; margin: 0; }
-  #panelAbout h4 { font-size: 12px; margin: 8px 0 0; }
-  #panelAbout p, #panelAbout ul { margin: 0; }
-  #panelAbout ul { padding-left: 16px; }
-  #panelAbout a { color: var(--figma-color-text-brand, #0d99ff); cursor: pointer; text-decoration: none; }
-  #panelAbout a:hover { text-decoration: underline; }
+:root {
+  /* Tokens UI3 — preferencia por --figma-color-* cuando existe equivalente;
+     el resto son los valores exactos del anatomy JSON, centralizados acá */
+  --bg: var(--figma-color-bg, #FFFFFF);
+  --bg-secondary: var(--figma-color-bg-secondary, #F5F5F5);
+  --text: var(--figma-color-text, #000000);
+  --text-muted: var(--figma-color-text-secondary, #5C5C5C);
+  --text-section: #171717;
+  --accent: var(--figma-color-bg-brand, #0D99FF);
+  --accent-text: var(--figma-color-text-onbrand, #FFFFFF);
+  --success: #14AE5C;
+  --error: #DC3412;
+  --stroke-dropzone: #D1D1D1;
+  --stroke-filecard: #EBEBEB;
+  --divider: var(--figma-color-border, #E6E6E6);
+  --progress-track: #D9D9D9;
+  --radius: 5px;
+  --radius-panel: 13px;
+  --spacer-6: 40px;
+}
+* { box-sizing: border-box; margin: 0; }
+/* flex de 3 partes: tabs fijas arriba, contenido con el ÚNICO scroll,
+   footer fijo abajo. El título/close los pone la ventana nativa de Figma. */
+body {
+  background: var(--bg);
+  font-family: Inter, sans-serif;
+  font-size: 11px; line-height: 16px; letter-spacing: 0.005em;
+  color: var(--text);
+  width: 600px; height: 100vh;
+  display: flex; flex-direction: column;
+}
+.icono-boton { width: 24px; height: 24px; border: none; background: none; padding: 0; cursor: pointer; border-radius: var(--radius); display: grid; place-items: center; color: var(--text); }
+.icono-boton:hover { background: var(--bg-secondary); }
+
+.tabs-barra { flex: none; padding: 12px 16px 8px; }
+.contenido { flex: 1 1 auto; overflow-y: auto; padding: 8px 16px 16px; display: flex; flex-direction: column; gap: 16px; }
+.tabs { display: flex; gap: 4px; height: 24px; flex: none; }
+.tab { height: 24px; padding: 0 8px; border-radius: var(--radius); border: none; background: none; font: 400 11px/16px Inter; letter-spacing: 0.005em; color: var(--text-muted); cursor: pointer; }
+.tab.activa { background: var(--bg-secondary); color: var(--text); font-weight: 600; }
+
+.panel-tab { display: flex; flex-direction: column; gap: 16px; }
+.oculto { display: none !important; }
+.fila { display: flex; gap: 8px; width: 568px; padding: 8px 0; }
+.fila > label, .fila > .etiqueta { width: 177px; flex: none; font: 600 11px/16px Inter; letter-spacing: 0.005em; padding-top: 4px; }
+.fila > .control { width: 383px; display: flex; flex-direction: column; gap: 8px; }
+.muted { color: var(--text-muted); }
+.seccion { font: 500 13px/22px Inter; letter-spacing: -0.0025em; color: var(--text-section); border-bottom: 1px solid var(--divider); padding-bottom: 4px; }
+
+.boton-link { border: none; background: none; padding: 0; color: var(--accent); font: 500 11px/16px Inter; letter-spacing: 0.005em; cursor: pointer; text-align: left; width: fit-content; }
+.boton-link:hover { text-decoration: underline; }
+.boton-link.rojo { color: var(--error); }
+.boton-secundario { height: 28px; padding: 0 12px; border: 1px solid var(--divider); background: var(--bg); border-radius: var(--radius); font: 500 11px/16px Inter; letter-spacing: 0.005em; cursor: pointer; color: var(--text); }
+.boton-secundario:hover { background: var(--bg-secondary); }
+.boton-primario { height: 28px; padding: 0 12px; border: none; border-radius: var(--radius); background: var(--accent); color: var(--accent-text); font: 600 11px/16px Inter; letter-spacing: 0.005em; cursor: pointer; }
+.boton-primario:disabled { opacity: 0.45; cursor: default; }
+
+/* File Upload Area — estados visuales; la lectura real ya está conectada a
+   success/error. TODO(upload-real): drag&drop y validación de tamaño (5 MB). */
+.zona-drop { width: 383px; min-height: 120px; border: 1px dashed var(--stroke-dropzone); border-radius: var(--radius); padding: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center; }
+.zona-drop .titulo { font-weight: 600; }
+.zona-drop .boton-secundario { height: 24px; padding: 0 8px; margin-top: 4px; }
+.tarjeta-archivo { width: 383px; border: 1px solid var(--stroke-filecard); border-radius: var(--radius); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.tarjeta-archivo .fila-archivo { display: flex; align-items: center; gap: 8px; }
+.tarjeta-archivo .datos { flex: 1; min-width: 0; }
+.tarjeta-archivo .nombre { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.estado-grupo { display: flex; align-items: center; gap: 4px; flex: none; }
+.estado-grupo.ok { color: var(--success); }
+.estado-grupo.fallo { color: var(--error); }
+.girando { display: inline-flex; animation: girar 1s linear infinite; }
+@keyframes girar { to { transform: rotate(360deg); } }
+.progreso { width: 367px; height: 6px; border-radius: 999px; background: var(--progress-track); overflow: hidden; }
+.progreso > div { height: 100%; border-radius: 999px; background: var(--accent); }
+
+.area-codigo { width: 383px; height: 112px; border: 1px solid var(--divider); border-radius: var(--radius); padding: 8px; font: 500 11px/16px 'Roboto Mono', monospace; letter-spacing: 0.005em; resize: none; color: var(--text); background: var(--bg); }
+.area-codigo:focus { outline: 1px solid var(--accent); }
+
+/* checkboxes y selects nativos con la piel UI3 */
+.check-fila { display: flex; align-items: flex-start; gap: 4px; padding: 4px 0; cursor: pointer; font: 400 11px/16px Inter; letter-spacing: 0.005em; }
+.check-fila input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); flex: none; }
+.caption { padding-left: 24px; color: var(--text-muted); }
+.select-envoltura { position: relative; width: fit-content; min-width: 117px; }
+.select-envoltura select { appearance: none; -webkit-appearance: none; height: 32px; min-width: 117px; padding: 0 28px 0 8px; border: 1px solid var(--divider); border-radius: var(--radius); background: var(--bg); color: var(--text); font: 400 11px/16px Inter; letter-spacing: 0.005em; cursor: pointer; }
+.select-envoltura .chevron { position: absolute; right: 2px; top: 4px; pointer-events: none; color: var(--text); }
+
+#status { white-space: pre-wrap; }
+#status.error { color: var(--error); }
+
+#panelAbout h3 { font: 500 13px/22px Inter; letter-spacing: -0.0025em; color: var(--text-section); margin: 0; }
+#panelAbout h4 { font: 600 11px/16px Inter; letter-spacing: 0.005em; margin: 8px 0 0; }
+#panelAbout p, #panelAbout ul, #panelAbout ol { margin: 0; }
+#panelAbout ul, #panelAbout ol { padding-left: 16px; }
+#panelAbout a { color: var(--accent); cursor: pointer; text-decoration: none; }
+#panelAbout a:hover { text-decoration: underline; }
+
+.pie { height: var(--spacer-6); flex: none; background: var(--bg-secondary); display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 16px; border-top: 1px solid var(--divider); }
+
+/* sprite de íconos para uso dinámico desde JS */
+#iconos { display: none; }
 </style>
 </head>
 <body>
   <!-- HTML estático en inglés (idioma default): la primera apertura con
-       storage limpio se ve en inglés sin re-render ni parpadeo -->
-  <h2 id="tituloPanel">Markdown → Flow diagram</h2>
-
-  <!-- fig-tab-content de FigUI3 es inerte: el switching de paneles es manual,
-       escuchando el change de fig-tabs -->
-  <fig-tabs id="tabs" value="input">
-    <fig-tab value="input" selected="true"><span id="tabInput">Input</span></fig-tab>
-    <fig-tab value="options"><span id="tabOptions">Options</span></fig-tab>
-    <fig-tab value="about"><span id="tabAbout">About</span></fig-tab>
-  </fig-tabs>
-
-  <div id="panelInput" class="panel">
-    <fig-field>
-      <label for="archivo" id="labelArchivo">User flow file (.md, .markdown or .txt)</label>
-      <!-- input nativo: el file picker de FigUI3 está orientado a imágenes -->
-      <input type="file" id="archivo" accept=".md,.markdown,.txt">
-    </fig-field>
-    <fig-field>
-      <label id="labelPegar">…or paste the content here</label>
-      <fig-input-text multiline id="texto" placeholder="flowchart TD&#10;    A([Start]) --> B[Step]"></fig-input-text>
-    </fig-field>
-    <p class="ayuda" id="ayudaArchivo">Upload a .md, .markdown or .txt file, or paste the content. An exact structure isn't required — the plugin does its best with whatever it finds.</p>
-    <fig-button id="descargarEjemplo">Download example markdown</fig-button>
-    <p class="ayuda" id="ayudaEjemplo">Don't have a file? Download a ready-made example to see the expected format.</p>
-    <fig-button variant="primary" id="generar">Generate</fig-button>
-    <div id="status"></div>
+       storage limpio se ve en inglés sin re-render ni parpadeo.
+       Sin header propio: el título y el close los da la ventana del plugin. -->
+  <div class="tabs-barra">
+    <div class="tabs" role="tablist">
+      <button class="tab activa" data-tab="input" id="tabInput">Upload</button>
+      <button class="tab" data-tab="options" id="tabOptions">Customize Flow</button>
+      <button class="tab" data-tab="about" id="tabAbout">About</button>
+    </div>
   </div>
 
-  <div id="panelOptions" class="panel oculto">
-  <fig-switch id="docs" checked><span id="textoDocs">Also generate documentation cards (steps, decisions, assumptions, etc.)</span></fig-switch>
-  <p class="ayuda" id="ayudaDocs">Creates cards with the flow's written content (steps, decisions, assumptions) alongside the diagram.</p>
-  <fig-switch id="edgeCases"><span id="textoEdgeCases">Separate edge cases and errors into their own flow</span></fig-switch>
-  <p class="ayuda" id="ayudaEdgeCases">Moves error and edge-case nodes into their own area to keep the main flow clean.</p>
-  <fig-switch id="repetirFlow"><span id="textoRepetirFlow">Repeat flow summary card at the start of each flow</span></fig-switch>
-  <p class="ayuda" id="ayudaRepetirFlow">Places a small copy of the flow summary at the start of each flow for quick context.</p>
+  <div class="contenido">
+    <!-- ============ Tab 1: Upload ============ -->
+    <div id="panelInput" class="panel-tab">
+      <p id="introUpload">Turn a Markdown user flow into an editable diagram and documentation cards. Upload or paste your file below.</p>
 
-  <fig-field direction="horizontal">
-    <label for="layoutStyle" id="labelLayout">Layout style</label>
-    <fig-dropdown id="layoutStyle" value="classic">
-      <option value="classic" selected>Classic</option>
-      <option value="cards">Cards</option>
-      <option value="swimlanes">Swimlanes</option>
-      <option value="table">Table</option>
-    </fig-dropdown>
-  </fig-field>
-  <p class="ayuda" id="ayudaLayout">How dense flows are arranged: Classic flowchart, independent Cards, Swimlanes by re-entry point, or a Table of cases.</p>
+      <div class="fila">
+        <label for="archivo" id="labelArchivo">User Flow file</label>
+        <div class="control">
+          <div class="zona-drop" id="zonaDrop">
+            <!-- ICON:icon.24.unsaved.changes -->
+            <div class="titulo" id="dropTitulo">Choose a file or drag &amp; drop it here.</div>
+            <div class="muted" id="dropSub">MD, Markdown or TXT, up to 5 MB.</div>
+            <button class="boton-secundario" id="browse">Browse File</button>
+            <input type="file" id="archivo" accept=".md,.markdown,.txt" style="display: none;">
+          </div>
+          <div id="tarjetaArchivoSlot"></div>
+        </div>
+      </div>
 
-  <div id="opcionesSwimlanes">
-    <fig-field direction="horizontal">
-      <label for="laneReingreso" id="labelLaneReingreso">Re-entry style</label>
-      <fig-dropdown id="laneReingreso" value="junction">
-        <option value="junction" selected>Junction node</option>
-        <option value="badge">Text badge</option>
-      </fig-dropdown>
-    </fig-field>
-    <fig-field direction="horizontal">
-      <label for="laneAgrupacion" id="labelLaneAgrupacion">Lane grouping</label>
-      <fig-dropdown id="laneAgrupacion" value="primero">
-        <option value="primero" selected>First re-entry</option>
-        <option value="duplicar">Duplicate per re-entry</option>
-      </fig-dropdown>
-    </fig-field>
-    <fig-field direction="horizontal">
-      <label for="laneOrientacion" id="labelLaneOrientacion">Lane orientation</label>
-      <fig-dropdown id="laneOrientacion" value="horizontal">
-        <option value="horizontal" selected>Horizontal</option>
-        <option value="vertical">Vertical</option>
-      </fig-dropdown>
-    </fig-field>
+      <div class="fila">
+        <label for="texto" id="labelPegar">Paste the content here</label>
+        <div class="control">
+          <textarea class="area-codigo" id="texto" placeholder="flowchart TD&#10;    A([Start]) --> B[Step]"></textarea>
+        </div>
+      </div>
+
+      <p class="muted"><span id="ayudaEjemplo">Don't have a file? Download a ready-made example to see the expected format.</span> <button class="boton-link" id="descargarEjemplo">Download example Markdown file</button></p>
+      <div id="status"></div>
+    </div>
+
+    <!-- ============ Tab 2: Customize Flow ============ -->
+    <div id="panelOptions" class="panel-tab oculto">
+      <div class="seccion" id="seccionGeneral">General</div>
+
+      <div class="fila">
+        <span class="etiqueta" id="labelRowDocs">Documentation Cards</span>
+        <div class="control">
+          <label class="check-fila"><input type="checkbox" id="docs" checked><span id="textoDocs">Also generate documentation cards (steps, decisions, assumptions, etc.)</span></label>
+          <p class="caption" id="ayudaDocs">Creates cards with the flow's written content (steps, decisions, assumptions) alongside the diagram.</p>
+        </div>
+      </div>
+      <div class="fila">
+        <span class="etiqueta" id="labelRowEdge">Flow Organization</span>
+        <div class="control">
+          <label class="check-fila"><input type="checkbox" id="edgeCases"><span id="textoEdgeCases">Separate edge cases and errors into their own flow</span></label>
+          <p class="caption" id="ayudaEdgeCases">Moves error and edge-case nodes into their own area to keep the main flow clean.</p>
+        </div>
+      </div>
+      <div class="fila">
+        <span class="etiqueta" id="labelRowRepetir">Summary Cards</span>
+        <div class="control">
+          <label class="check-fila"><input type="checkbox" id="repetirFlow"><span id="textoRepetirFlow">Repeat flow summary card at the start of each flow</span></label>
+          <p class="caption" id="ayudaRepetirFlow">Places a small copy of the flow summary at the start of each flow for quick context.</p>
+        </div>
+      </div>
+
+      <div class="seccion" id="seccionLayoutTitulo">Layout Style</div>
+      <p id="introLayout">Choose how flows are arranged on the canvas. Dense flows can use a simplified layout.</p>
+
+      <div class="fila">
+        <label for="layoutStyle" id="labelLayout">Style</label>
+        <div class="control">
+          <div class="select-envoltura">
+            <select id="layoutStyle">
+              <option value="classic" selected>Classic</option>
+              <option value="cards">Cards</option>
+              <option value="swimlanes">Swimlanes</option>
+              <option value="table">Table</option>
+            </select>
+            <span class="chevron"><!-- ICON:icon.24.chevron.down --></span>
+          </div>
+          <p class="caption" id="ayudaLayout" style="padding-left: 0;">Traditional flowchart with connected nodes. Dense flows (edge cases, errors) are split into one small sub-flow per case to stay readable.</p>
+        </div>
+      </div>
+
+      <div id="opcionesSwimlanes" class="oculto">
+        <div class="fila">
+          <label for="laneReingreso" id="labelLaneReingreso">Re-entry Style</label>
+          <div class="control">
+            <div class="select-envoltura">
+              <select id="laneReingreso">
+                <option value="junction" selected>Junction Node</option>
+                <option value="badge">Text Badge</option>
+              </select>
+              <span class="chevron"><!-- ICON:icon.24.chevron.down --></span>
+            </div>
+            <p class="caption" id="ayudaLaneReingreso" style="padding-left: 0;">Show the re-entry as a small junction node inside each mini-flow, or as a short text badge below it.</p>
+          </div>
+        </div>
+        <div class="fila">
+          <label for="laneAgrupacion" id="labelLaneAgrupacion">Lane Grouping</label>
+          <div class="control">
+            <div class="select-envoltura">
+              <select id="laneAgrupacion">
+                <option value="primero" selected>First Re-entry</option>
+                <option value="duplicar">Duplicate per Re-entry</option>
+              </select>
+              <span class="chevron"><!-- ICON:icon.24.chevron.down --></span>
+            </div>
+            <p class="caption" id="ayudaLaneAgrupacion" style="padding-left: 0;">Cases with several re-entries go to their first lane only, or get duplicated into every matching lane.</p>
+          </div>
+        </div>
+        <div class="fila">
+          <label for="laneOrientacion" id="labelLaneOrientacion">Lane Orientation</label>
+          <div class="control">
+            <div class="select-envoltura">
+              <select id="laneOrientacion">
+                <option value="horizontal" selected>Horizontal</option>
+                <option value="vertical">Vertical</option>
+              </select>
+              <span class="chevron"><!-- ICON:icon.24.chevron.down --></span>
+            </div>
+            <p class="caption" id="ayudaLaneOrientacion" style="padding-left: 0;">Stack the lanes as horizontal bands, or place them side by side as columns.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="fila">
+        <span class="etiqueta" id="labelRowOrganizacion">Organization</span>
+        <div class="control">
+          <label class="check-fila"><input type="checkbox" id="soloDensos" checked><span id="textoSoloDensos">Apply simplified layout only to dense flows</span></label>
+          <p class="caption" id="ayudaSoloDensos">Simple, linear flows stay as a Classic flowchart even when another layout style is selected.</p>
+        </div>
+      </div>
+
+      <div class="seccion" id="seccionFlowTitulo">Flow</div>
+      <div class="fila">
+        <label for="direccion" id="labelDireccion">Direction</label>
+        <div class="control">
+          <div class="select-envoltura">
+            <select id="direccion">
+              <option value="vertical" selected>Vertical</option>
+              <option value="horizontal">Horizontal</option>
+            </select>
+            <span class="chevron"><!-- ICON:icon.24.chevron.down --></span>
+          </div>
+          <p class="caption" id="ayudaDireccion" style="padding-left: 0;">Whether the diagram grows top-to-bottom (Vertical) or left-to-right (Horizontal).</p>
+        </div>
+      </div>
+
+      <div class="seccion" id="seccionLanguageTitulo">Language</div>
+      <div class="fila">
+        <label for="idioma" id="labelIdioma">Output Language</label>
+        <div class="control">
+          <div class="select-envoltura">
+            <select id="idioma">
+              <option value="en" selected>English</option>
+              <option value="es">Español</option>
+            </select>
+            <span class="chevron"><!-- ICON:icon.24.chevron.down --></span>
+          </div>
+          <p class="caption" id="ayudaIdioma" style="padding-left: 0;">Language for the plugin interface and the labels it generates on the canvas (not your file's content, which is kept as-is).</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Tab 3: About ============ -->
+    <div id="panelAbout" class="panel-tab oculto">
+      <h3>Markdown to Flow</h3>
+      <p id="aboutResumen">Turns Markdown user flows with Mermaid diagrams into editable flow diagrams and documentation cards, natively in Figma and FigJam. Upload or paste your flow, pick your options, and generate a structured, editable result on the canvas.</p>
+
+      <h4 id="aboutComoUsarTitulo">How to use this plugin</h4>
+      <ol>
+        <li id="aboutPaso1">(Optional) Download the example markdown to see the expected format.</li>
+        <li id="aboutPaso2">Upload a .md / .markdown / .txt file, or paste your user flow content into the text area.</li>
+        <li id="aboutPaso3">Go to the Customize Flow tab to choose what to generate (diagram, documentation cards), the layout style, direction, and language.</li>
+        <li id="aboutPaso4">Back on the Upload tab, press Generate.</li>
+        <li id="aboutPaso5">Your flow diagram and documentation appear on the canvas as native, editable elements.</li>
+      </ol>
+      <p class="muted" id="aboutTip">Tip: an exact file structure isn't required — the plugin detects sections and the Mermaid diagram wherever it finds them, and does its best with what's there.</p>
+
+      <h4 id="aboutRecursosTitulo">Resources used</h4>
+      <ul>
+        <li><a data-url="https://developers.figma.com/docs/plugins/">Figma Plugin API</a> — <span id="aboutRecursoFigma">typings and canvas APIs (built with esbuild; no other runtime dependencies)</span></li>
+        <li><a data-url="https://mermaid.js.org/syntax/flowchart.html">Mermaid flowchart syntax</a> — <span id="aboutRecursoMermaid">the diagram source format the plugin parses (with its own parser, no runtime dependency)</span></li>
+        <li><a data-url="https://www.figma.com/community/file/1486123838948777078">Figma UI3</a> — <span id="aboutRecursoFigui">design tokens, text styles and icons used by the plugin panel</span></li>
+      </ul>
+
+      <h4 id="aboutOpenSourceTitulo">Open source</h4>
+      <p><span id="aboutOpenSourceTexto">This is an open-source plugin, licensed under MIT. You're free to modify and improve it — if you do, please let me know and credit the original plugin in your version.</span> <a data-url="https://github.com/bochenn/markdown-to-flow" id="aboutRepoLink">View the source</a></p>
+
+      <h4 id="aboutFeedbackTitulo">Feedback &amp; feature requests</h4>
+      <p id="aboutFeedbackTexto">Ideas, improvement suggestions and feature requests are very welcome. Reach out and tell me what would make this more useful for your workflow.</p>
+
+      <h4 id="aboutCreatorTitulo">Creator</h4>
+      <p id="aboutCreatorTexto">Created and maintained by Leandro Henflen.</p>
+      <ul>
+        <li><a data-url="https://crafter.studio">crafter.studio</a></li>
+        <li><a data-url="https://x.com/bochenn">x.com/bochenn</a></li>
+        <li><a data-url="https://www.linkedin.com/in/bochenn">linkedin.com/in/bochenn</a></li>
+      </ul>
+
+      <h4 id="aboutSupportTitulo">Support the project</h4>
+      <p><span id="aboutSupportTexto">If it saves you time, a donation helps keep the development going:</span> <a data-url="https://buymeacoffee.com/bochenn">buymeacoffee.com/bochenn</a></p>
+    </div>
   </div>
 
-  <fig-switch id="soloDensos" checked><span id="textoSoloDensos">Apply simplified layout only to dense flows</span></fig-switch>
-  <p class="ayuda" id="ayudaSoloDensos">Simple, linear flows stay as a Classic flowchart even when another layout style is selected.</p>
-
-  <fig-field direction="horizontal">
-    <label for="direccion" id="labelDireccion">Flow direction</label>
-    <fig-dropdown id="direccion" value="vertical">
-      <option value="vertical" selected>Vertical</option>
-      <option value="horizontal">Horizontal</option>
-    </fig-dropdown>
-  </fig-field>
-  <p class="ayuda" id="ayudaDireccion">Whether the diagram grows top-to-bottom (Vertical) or left-to-right (Horizontal).</p>
-
-  <fig-field direction="horizontal">
-    <label for="idioma" id="labelIdioma">Output language</label>
-    <fig-dropdown id="idioma" value="en">
-      <option value="en" selected>English</option>
-      <option value="es">Español</option>
-    </fig-dropdown>
-  </fig-field>
-  <p class="ayuda" id="ayudaIdioma">Language for the plugin interface and the labels it generates on the canvas (not your file's content, which is kept as-is).</p>
+  <div class="pie">
+    <button class="boton-secundario" id="cancelar">Cancel</button>
+    <button class="boton-primario" id="generar">Generate</button>
   </div>
 
-  <div id="panelAbout" class="panel oculto">
-    <h3>Markdown to Flow</h3>
-    <p id="aboutResumen">Turns Markdown user flows with Mermaid diagrams into editable flow diagrams and documentation cards, natively in Figma and FigJam. Upload or paste your flow, pick your options, and generate a structured, editable result on the canvas.</p>
-
-    <h4 id="aboutRecursosTitulo">Resources used</h4>
-    <ul>
-      <li><a data-url="https://github.com/rogie/figui3">FigUI3</a> — <span id="aboutRecursoFigui">native-style UI components for the plugin panel</span></li>
-      <li><a data-url="https://mermaid.js.org/syntax/flowchart.html">Mermaid flowchart syntax</a> — <span id="aboutRecursoMermaid">the diagram source format the plugin parses (with its own parser, no runtime dependency)</span></li>
-      <li><a data-url="https://developers.figma.com/docs/plugins/">Figma Plugin API</a> — <span id="aboutRecursoFigma">typings and canvas APIs (built with esbuild; no other runtime dependencies)</span></li>
-    </ul>
-
-    <h4 id="aboutOpenSourceTitulo">Open source</h4>
-    <p><span id="aboutOpenSourceTexto">This is an open-source plugin, licensed under MIT. You're free to modify and improve it — if you do, please let me know and credit the original plugin in your version.</span> <a data-url="https://github.com/bochenn/markdown-to-flow" id="aboutRepoLink">View the source</a></p>
-
-    <h4 id="aboutFeedbackTitulo">Feedback &amp; feature requests</h4>
-    <p id="aboutFeedbackTexto">Ideas, improvement suggestions and feature requests are very welcome. Reach out and tell me what would make this more useful for your workflow.</p>
-
-    <h4 id="aboutCreatorTitulo">Creator</h4>
-    <p id="aboutCreatorTexto">Created and maintained by Leandro Henflen.</p>
-    <ul>
-      <li><a data-url="https://crafter.studio">crafter.studio</a></li>
-      <li><a data-url="https://x.com/bochenn">x.com/bochenn</a></li>
-      <li><a data-url="https://www.linkedin.com/in/bochenn">linkedin.com/in/bochenn</a></li>
-    </ul>
-
-    <h4 id="aboutSupportTitulo">Support the project</h4>
-    <p><span id="aboutSupportTexto">If it saves you time, a donation helps keep the development going:</span> <a data-url="https://buymeacoffee.com/bochenn">buymeacoffee.com/bochenn</a></p>
+  <!-- sprite para la tarjeta de archivo generada por JS -->
+  <div id="iconos">
+    <span data-icono="file.md"><!-- ICON:icon.24.file.md --></span>
+    <span data-icono="file.txt"><!-- ICON:icon.24.file.txt --></span>
+    <span data-icono="close"><!-- ICON:icon.24.close.small --></span>
+    <span data-icono="trash"><!-- ICON:icon.24.trash --></span>
+    <span data-icono="loading"><!-- ICON:icon.16.loading --></span>
+    <span data-icono="warning"><!-- ICON:icon.24.warning.small:16 --></span>
+    <span data-icono="check"><!-- ICON:icon.24.approved.checkmark:16 --></span>
   </div>
 
-<!-- FIGUI3:JS -->
 <script>
   // Copia local de las claves ui.* — mantener en sincronía con src/i18n.ts
   // (el iframe no tiene bundler, no puede importar el diccionario TS).
   const TEXTOS = {
     en: {
-      tituloPanel: 'Markdown → Flow diagram',
-      labelArchivo: 'User flow file (.md, .markdown or .txt)',
-      ayudaArchivo: "Upload a .md, .markdown or .txt file, or paste the content. An exact structure isn't required — the plugin does its best with whatever it finds.",
-      labelPegar: '…or paste the content here',
-      descargarEjemplo: 'Download example markdown',
-      ayudaEjemplo: "Don't have a file? Download a ready-made example to see the expected format.",
-      tabInput: 'Input',
-      tabOptions: 'Options',
+      tabInput: 'Upload',
+      tabOptions: 'Customize Flow',
       tabAbout: 'About',
+      introUpload: 'Turn a Markdown user flow into an editable diagram and documentation cards. Upload or paste your file below.',
+      descargarEjemplo: 'Download example Markdown file',
+      labelArchivo: 'User Flow file',
+      dropTitulo: 'Choose a file or drag & drop it here.',
+      dropSub: 'MD, Markdown or TXT, up to 5 MB.',
+      browse: 'Browse File',
+      labelPegar: 'Paste the content here',
+      ayudaEjemplo: "Don't have a file? Download a ready-made example to see the expected format.",
+      estadoUploading: 'Uploading...',
+      estadoCompleted: 'Completed',
+      estadoFailed: 'Failed',
+      tryAgain: 'Try Again',
+      seccionGeneral: 'General',
+      labelRowDocs: 'Documentation Cards',
+      textoDocs: 'Also generate documentation cards (steps, decisions, assumptions, etc.)',
       ayudaDocs: "Creates cards with the flow's written content (steps, decisions, assumptions) alongside the diagram.",
+      labelRowEdge: 'Flow Organization',
+      textoEdgeCases: 'Separate edge cases and errors into their own flow',
       ayudaEdgeCases: 'Moves error and edge-case nodes into their own area to keep the main flow clean.',
+      labelRowRepetir: 'Summary Cards',
+      textoRepetirFlow: 'Repeat flow summary card at the start of each flow',
       ayudaRepetirFlow: 'Places a small copy of the flow summary at the start of each flow for quick context.',
-      ayudaLayout: 'How dense flows are arranged: Classic flowchart, independent Cards, Swimlanes by re-entry point, or a Table of cases.',
+      seccionLayoutTitulo: 'Layout Style',
+      introLayout: 'Choose how flows are arranged on the canvas. Dense flows can use a simplified layout.',
+      labelLayout: 'Style',
+      layoutDescClassic: 'Traditional flowchart with connected nodes. Dense flows (edge cases, errors) are split into one small sub-flow per case to stay readable.',
+      layoutDescCards: 'Each case becomes a self-contained card with its own mini-flow — no long connectors between them. Best for collections of independent cases.',
+      layoutDescSwimlanes: 'Groups cases into lanes by their re-entry point into the main flow. The re-entry is shown by lane membership instead of long arrows.',
+      layoutDescTable: 'A matrix with one row per case: trigger, what the system does, result, and where it re-enters. Most compact for reviewing coverage.',
+      labelLaneReingreso: 'Re-entry Style',
+      ayudaLaneReingreso: 'Show the re-entry as a small junction node inside each mini-flow, or as a short text badge below it.',
+      labelLaneAgrupacion: 'Lane Grouping',
+      ayudaLaneAgrupacion: 'Cases with several re-entries go to their first lane only, or get duplicated into every matching lane.',
+      labelLaneOrientacion: 'Lane Orientation',
+      ayudaLaneOrientacion: 'Stack the lanes as horizontal bands, or place them side by side as columns.',
+      labelRowOrganizacion: 'Organization',
+      textoSoloDensos: 'Apply simplified layout only to dense flows',
       ayudaSoloDensos: 'Simple, linear flows stay as a Classic flowchart even when another layout style is selected.',
+      seccionFlowTitulo: 'Flow',
+      labelDireccion: 'Direction',
       ayudaDireccion: 'Whether the diagram grows top-to-bottom (Vertical) or left-to-right (Horizontal).',
+      seccionLanguageTitulo: 'Language',
+      labelIdioma: 'Output Language',
       ayudaIdioma: "Language for the plugin interface and the labels it generates on the canvas (not your file's content, which is kept as-is).",
       aboutResumen: 'Turns Markdown user flows with Mermaid diagrams into editable flow diagrams and documentation cards, natively in Figma and FigJam. Upload or paste your flow, pick your options, and generate a structured, editable result on the canvas.',
+      aboutComoUsarTitulo: 'How to use this plugin',
+      aboutPaso1: '(Optional) Download the example markdown to see the expected format.',
+      aboutPaso2: 'Upload a .md / .markdown / .txt file, or paste your user flow content into the text area.',
+      aboutPaso3: 'Go to the Customize Flow tab to choose what to generate (diagram, documentation cards), the layout style, direction, and language.',
+      aboutPaso4: 'Back on the Upload tab, press Generate.',
+      aboutPaso5: 'Your flow diagram and documentation appear on the canvas as native, editable elements.',
+      aboutTip: "Tip: an exact file structure isn't required — the plugin detects sections and the Mermaid diagram wherever it finds them, and does its best with what's there.",
       aboutRecursosTitulo: 'Resources used',
-      aboutRecursoFigui: 'native-style UI components for the plugin panel',
-      aboutRecursoMermaid: 'the diagram source format the plugin parses (with its own parser, no runtime dependency)',
       aboutRecursoFigma: 'typings and canvas APIs (built with esbuild; no other runtime dependencies)',
+      aboutRecursoMermaid: 'the diagram source format the plugin parses (with its own parser, no runtime dependency)',
+      aboutRecursoFigui: 'design tokens, text styles and icons used by the plugin panel',
       aboutOpenSourceTitulo: 'Open source',
       aboutOpenSourceTexto: "This is an open-source plugin, licensed under MIT. You're free to modify and improve it — if you do, please let me know and credit the original plugin in your version.",
       aboutRepoLink: 'View the source',
@@ -185,16 +401,7 @@
       aboutCreatorTexto: 'Created and maintained by Leandro Henflen.',
       aboutSupportTitulo: 'Support the project',
       aboutSupportTexto: 'If it saves you time, a donation helps keep the development going:',
-      textoDocs: 'Also generate documentation cards (steps, decisions, assumptions, etc.)',
-      textoEdgeCases: 'Separate edge cases and errors into their own flow',
-      textoRepetirFlow: 'Repeat flow summary card at the start of each flow',
-      labelLayout: 'Layout style',
-      textoSoloDensos: 'Apply simplified layout only to dense flows',
-      labelLaneReingreso: 'Re-entry style',
-      labelLaneAgrupacion: 'Lane grouping',
-      labelLaneOrientacion: 'Lane orientation',
-      labelDireccion: 'Flow direction',
-      labelIdioma: 'Output language',
+      cancelar: 'Cancel',
       generar: 'Generate',
       generando: 'Generating…',
       archivoCargado: 'File loaded: ',
@@ -204,27 +411,65 @@
       avisos: 'Warnings:',
     },
     es: {
-      tituloPanel: 'Markdown → Diagrama de flujo',
-      labelArchivo: 'Archivo de user flow (.md, .markdown o .txt)',
-      ayudaArchivo: 'Subí un archivo .md, .markdown o .txt, o pegá el contenido. No hace falta una estructura exacta: el plugin genera lo mejor posible con lo que encuentre.',
-      labelPegar: '…o pegá el contenido acá',
-      descargarEjemplo: 'Descargar markdown de ejemplo',
-      ayudaEjemplo: '¿No tenés un archivo? Descargá un ejemplo listo para ver el formato esperado.',
-      tabInput: 'Entrada',
-      tabOptions: 'Opciones',
+      tabInput: 'Subir',
+      tabOptions: 'Personalizar flujo',
       tabAbout: 'Acerca de',
+      introUpload: 'Convertí un user flow en Markdown en un diagrama editable y cards de documentación. Subí o pegá tu archivo acá abajo.',
+      descargarEjemplo: 'Descargar Markdown de ejemplo',
+      labelArchivo: 'Archivo de user flow',
+      dropTitulo: 'Elegí un archivo o arrastralo acá.',
+      dropSub: 'MD, Markdown o TXT, hasta 5 MB.',
+      browse: 'Elegir archivo',
+      labelPegar: 'Pegá el contenido acá',
+      ayudaEjemplo: '¿No tenés un archivo? Descargá un ejemplo listo para ver el formato esperado.',
+      estadoUploading: 'Subiendo...',
+      estadoCompleted: 'Completado',
+      estadoFailed: 'Falló',
+      tryAgain: 'Reintentar',
+      seccionGeneral: 'General',
+      labelRowDocs: 'Cards de documentación',
+      textoDocs: 'Generar también cards de documentación (steps, decisiones, assumptions, etc.)',
       ayudaDocs: 'Crea cards con el contenido escrito del flujo (steps, decisiones, assumptions) junto al diagrama.',
+      labelRowEdge: 'Organización del flujo',
+      textoEdgeCases: 'Separar edge cases y errores en un flujo aparte',
       ayudaEdgeCases: 'Mueve los nodos de error y edge cases a su propia zona para mantener limpio el flujo principal.',
+      labelRowRepetir: 'Cards de resumen',
+      textoRepetirFlow: 'Repetir la card de resumen del Flow al inicio de cada flujo',
       ayudaRepetirFlow: 'Pone una copia chica del resumen del flujo al inicio de cada flujo, como contexto rápido.',
-      ayudaLayout: 'Cómo se organizan los flujos densos: flowchart Classic, Cards independientes, Swimlanes por punto de reingreso, o una Table de casos.',
+      seccionLayoutTitulo: 'Estilo de layout',
+      introLayout: 'Elegí cómo se organizan los flujos en el canvas. Los flujos densos pueden usar un layout simplificado.',
+      labelLayout: 'Estilo',
+      layoutDescClassic: 'Flowchart tradicional con nodos conectados. Los flujos densos (edge cases, errores) se parten en un sub-flujo chico por caso para mantener la legibilidad.',
+      layoutDescCards: 'Cada caso se vuelve una tarjeta autocontenida con su propio mini-flujo — sin conectores largos entre ellas. Ideal para colecciones de casos independientes.',
+      layoutDescSwimlanes: 'Agrupa los casos en carriles según su punto de reingreso al flujo principal. El reingreso se muestra por pertenencia al carril en vez de flechas largas.',
+      layoutDescTable: 'Una matriz con una fila por caso: disparador, qué hace el sistema, resultado y dónde reingresa. Lo más compacto para revisar cobertura.',
+      labelLaneReingreso: 'Estilo de reingreso',
+      ayudaLaneReingreso: 'Muestra el reingreso como nodo junction chico dentro de cada mini-flujo, o como un badge de texto debajo.',
+      labelLaneAgrupacion: 'Agrupación de carriles',
+      ayudaLaneAgrupacion: 'Los casos con varios reingresos van solo al carril del primero, o se duplican en cada carril que corresponda.',
+      labelLaneOrientacion: 'Orientación de carriles',
+      ayudaLaneOrientacion: 'Apila los carriles como bandas horizontales, o los pone lado a lado como columnas.',
+      labelRowOrganizacion: 'Organización',
+      textoSoloDensos: 'Aplicar el layout simplificado solo a flujos densos',
       ayudaSoloDensos: 'Los flujos simples y lineales quedan como flowchart Classic aunque haya otro estilo elegido.',
+      seccionFlowTitulo: 'Flujo',
+      labelDireccion: 'Dirección',
       ayudaDireccion: 'Si el diagrama crece de arriba hacia abajo (Vertical) o de izquierda a derecha (Horizontal).',
+      seccionLanguageTitulo: 'Idioma',
+      labelIdioma: 'Idioma de salida',
       ayudaIdioma: 'Idioma de la interfaz del plugin y de las etiquetas que genera en el canvas (no del contenido de tu archivo, que se conserva tal cual).',
       aboutResumen: 'Convierte user flows en Markdown con diagramas Mermaid en diagramas de flujo y cards de documentación editables, nativo en Figma y FigJam. Subí o pegá tu flujo, elegí las opciones y generá un resultado estructurado y editable en el canvas.',
+      aboutComoUsarTitulo: 'Cómo usar este plugin',
+      aboutPaso1: '(Opcional) Descargá el markdown de ejemplo para ver el formato esperado.',
+      aboutPaso2: 'Subí un archivo .md / .markdown / .txt, o pegá el contenido de tu user flow en el área de texto.',
+      aboutPaso3: 'Andá a la pestaña Personalizar flujo para elegir qué generar (diagrama, cards de documentación), el estilo de layout, la dirección y el idioma.',
+      aboutPaso4: 'De vuelta en la pestaña Subir, apretá Generar.',
+      aboutPaso5: 'Tu diagrama de flujo y la documentación aparecen en el canvas como elementos nativos y editables.',
+      aboutTip: 'Tip: no hace falta una estructura exacta de archivo — el plugin detecta las secciones y el diagrama Mermaid donde estén, y genera lo mejor posible con lo que haya.',
       aboutRecursosTitulo: 'Recursos utilizados',
-      aboutRecursoFigui: 'componentes de UI con estilo nativo para el panel del plugin',
-      aboutRecursoMermaid: 'el formato de origen de los diagramas que el plugin parsea (con parser propio, sin dependencia en runtime)',
       aboutRecursoFigma: 'typings y APIs del canvas (buildeado con esbuild; sin otras dependencias en runtime)',
+      aboutRecursoMermaid: 'el formato de origen de los diagramas que el plugin parsea (con parser propio, sin dependencia en runtime)',
+      aboutRecursoFigui: 'tokens de diseño, estilos de texto e íconos usados por el panel del plugin',
       aboutOpenSourceTitulo: 'Open source',
       aboutOpenSourceTexto: 'Este plugin es open source, con licencia MIT. Podés modificarlo y mejorarlo — si lo hacés, avisame y da crédito al plugin original en tu versión.',
       aboutRepoLink: 'Ver el código',
@@ -234,16 +479,7 @@
       aboutCreatorTexto: 'Creado y mantenido por Leandro Henflen.',
       aboutSupportTitulo: 'Apoyar el proyecto',
       aboutSupportTexto: 'Si te ahorra tiempo, una donación ayuda a que el desarrollo siga:',
-      textoDocs: 'Generar también cards de documentación (steps, decisiones, assumptions, etc.)',
-      textoEdgeCases: 'Separar edge cases y errores en un flujo aparte',
-      textoRepetirFlow: 'Repetir la card de resumen del Flow al inicio de cada flujo',
-      labelLayout: 'Estilo de layout',
-      textoSoloDensos: 'Aplicar el layout simplificado solo a flujos densos',
-      labelLaneReingreso: 'Estilo de reingreso',
-      labelLaneAgrupacion: 'Agrupación de carriles',
-      labelLaneOrientacion: 'Orientación de carriles',
-      labelDireccion: 'Dirección del flujo',
-      labelIdioma: 'Idioma de salida',
+      cancelar: 'Cancelar',
       generar: 'Generar',
       generando: 'Generando…',
       archivoCargado: 'Archivo cargado: ',
@@ -254,8 +490,6 @@
     },
   };
 
-  // Markdown de ejemplo embebido (un solo flujo, no denso): se descarga como
-  // Blob UTF-8 desde el iframe — sin fetch, compatible con networkAccess none.
   const EXAMPLE_MARKDOWN = `# User Flow — Buying jeans without being signed in
 
 > 📄 Example file for the **Markdown to Flow** plugin — edit it or replace it with your own user flow.
@@ -386,87 +620,62 @@ flowchart TD
   const selectorDireccion = document.getElementById('direccion');
   const selectorIdioma = document.getElementById('idioma');
   const status = document.getElementById('status');
-
-  // Lectura/escritura tolerante de los web components de FigUI3: la propiedad
-  // cuando el elemento ya está upgradeado, el atributo como fallback (el
-  // estado inicial puede llegar antes de que el módulo registre los tags).
-  const leerValor = (el) => (el.value !== undefined && el.value !== null && el.value !== '' ? el.value : el.getAttribute('value'));
-  const leerCheck = (el) => (typeof el.checked === 'boolean' ? el.checked : el.hasAttribute('checked'));
-  const setValor = (el, v) => {
-    el.setAttribute('value', v);
-    if ('value' in el) el.value = v;
-    const opt = el.querySelector && el.querySelector(`option[value="${v}"]`);
-    if (opt) {
-      for (const o of el.querySelectorAll('option')) o.removeAttribute('selected');
-      opt.setAttribute('selected', '');
-    }
-  };
-  const setCheck = (el, v) => {
-    if (v) el.setAttribute('checked', '');
-    else el.removeAttribute('checked');
-    if ('checked' in el) el.checked = !!v;
-  };
-
-  // switching manual de paneles: fig-tab-content de FigUI3 es inerte, pero
-  // fig-tabs setea su value al del tab elegido y dispara change
-  const tabs = document.getElementById('tabs');
-  const paneles = {
-    input: document.getElementById('panelInput'),
-    options: document.getElementById('panelOptions'),
-    about: document.getElementById('panelAbout'),
-  };
-  tabs.addEventListener('change', () => {
-    const activo = leerValor(tabs) || 'input';
-    for (const clave in paneles) paneles[clave].classList.toggle('oculto', clave !== activo);
-  });
-
-  // links externos: window.open no es confiable en el iframe del plugin —
-  // se delega al main thread, que llama figma.openExternal con whitelist
-  for (const link of document.querySelectorAll('[data-url]')) {
-    link.addEventListener('click', (e) => {
-      e.preventDefault();
-      parent.postMessage({ pluginMessage: { type: 'abrir-url', url: link.getAttribute('data-url') } }, '*');
-    });
-  }
-
-  // los sub-settings de Swimlanes solo se muestran cuando aplica
-  function actualizarOpcionesLane() {
-    opcionesSwimlanes.style.display = leerValor(selectorLayout) === 'swimlanes' ? 'flex' : 'none';
-  }
-  selectorLayout.addEventListener('change', actualizarOpcionesLane);
+  const botonGenerar = document.getElementById('generar');
 
   let idiomaActual = 'en';
   let nombreArchivo = null;
 
   function textos() { return TEXTOS[idiomaActual] || TEXTOS.en; }
+  const iconoDe = (nombre) => document.querySelector('#iconos [data-icono="' + nombre + '"]').innerHTML;
 
-  function aplicarIdioma(lang) {
-    idiomaActual = lang;
+  // --- tabs (switching manual de paneles) ---
+  const paneles = {
+    input: document.getElementById('panelInput'),
+    options: document.getElementById('panelOptions'),
+    about: document.getElementById('panelAbout'),
+  };
+  for (const boton of document.querySelectorAll('.tab')) {
+    boton.addEventListener('click', () => {
+      for (const otro of document.querySelectorAll('.tab')) otro.classList.toggle('activa', otro === boton);
+      const activo = boton.getAttribute('data-tab');
+      for (const clave in paneles) paneles[clave].classList.toggle('oculto', clave !== activo);
+    });
+  }
+
+  // --- File Upload Area ---
+  // Estados visuales de la tarjeta de archivo. La lectura real (FileReader)
+  // ya dispara success/error; 'uploading' queda como hook.
+  // TODO(upload-real): drag&drop sobre la zona y validación de tamaño (5 MB).
+  function mostrarEstadoUpload(estado, nombre) {
+    const slot = document.getElementById('tarjetaArchivoSlot');
+    botonGenerar.disabled = estado === 'error';
+    if (estado === 'idle') { slot.innerHTML = ''; return; }
     const tx = textos();
-    for (const id of ['tituloPanel', 'tabInput', 'tabOptions', 'tabAbout',
-      'labelArchivo', 'ayudaArchivo', 'labelPegar', 'descargarEjemplo', 'ayudaEjemplo',
-      'textoDocs', 'ayudaDocs', 'textoEdgeCases', 'ayudaEdgeCases', 'textoRepetirFlow', 'ayudaRepetirFlow',
-      'labelLayout', 'ayudaLayout', 'textoSoloDensos', 'ayudaSoloDensos',
-      'labelLaneReingreso', 'labelLaneAgrupacion', 'labelLaneOrientacion',
-      'labelDireccion', 'ayudaDireccion', 'labelIdioma', 'ayudaIdioma',
-      'aboutResumen', 'aboutRecursosTitulo', 'aboutRecursoFigui', 'aboutRecursoMermaid', 'aboutRecursoFigma',
-      'aboutOpenSourceTitulo', 'aboutOpenSourceTexto', 'aboutRepoLink',
-      'aboutFeedbackTitulo', 'aboutFeedbackTexto', 'aboutCreatorTitulo', 'aboutCreatorTexto',
-      'aboutSupportTitulo', 'aboutSupportTexto']) {
-      document.getElementById(id).textContent = tx[id];
-    }
-    document.getElementById('generar').textContent = tx.generar;
+    const esTxt = (nombre || '').toLowerCase().endsWith('.txt');
+    const estadoHtml = {
+      uploading: '<span class="estado-grupo"><span class="girando">' + iconoDe('loading') + '</span><span class="muted">' + tx.estadoUploading + '</span></span><button class="icono-boton" id="accionUpload" title="Cancel">' + iconoDe('close') + '</button>',
+      success: '<span class="estado-grupo ok">' + iconoDe('check') + '<span>' + tx.estadoCompleted + '</span></span><button class="icono-boton" id="accionUpload" title="Remove">' + iconoDe('trash') + '</button>',
+      error: '<span class="estado-grupo fallo">' + iconoDe('warning') + '<span>' + tx.estadoFailed + '</span></span><button class="boton-link rojo" id="reintentarUpload">' + tx.tryAgain + '</button><button class="icono-boton" id="accionUpload" title="Remove">' + iconoDe('trash') + '</button>',
+    }[estado];
+    const progreso = estado === 'uploading' ? '<div class="progreso"><div style="width: 35%"></div></div>' : '';
+    slot.innerHTML = '<div class="tarjeta-archivo"><div class="fila-archivo">'
+      + iconoDe(esTxt ? 'file.txt' : 'file.md')
+      + '<div class="datos"><div class="nombre"></div><div class="muted" id="subtituloArchivo"></div></div>'
+      + estadoHtml + '</div>' + progreso + '</div>';
+    slot.querySelector('.nombre').textContent = nombre || '';
+    const accion = document.getElementById('accionUpload');
+    if (accion) accion.addEventListener('click', () => {
+      // quitar/cancelar: vuelve a idle y descarta el archivo cargado
+      nombreArchivo = null;
+      texto.value = '';
+      archivo.value = '';
+      mostrarEstadoUpload('idle');
+    });
+    const reintentar = document.getElementById('reintentarUpload');
+    if (reintentar) reintentar.addEventListener('click', () => archivo.click());
   }
 
-  function mostrar(mensaje, esError) {
-    status.textContent = mensaje;
-    status.className = esError ? 'error' : '';
-  }
-
-  selectorIdioma.addEventListener('change', () => {
-    aplicarIdioma(leerValor(selectorIdioma));
-    parent.postMessage({ pluginMessage: { type: 'cambiar-idioma', lang: idiomaActual } }, '*');
-  });
+  document.getElementById('browse').addEventListener('click', () => archivo.click());
 
   archivo.onchange = () => {
     const f = archivo.files[0];
@@ -477,22 +686,29 @@ flowchart TD
       // binario (ej. .docx renombrado): null bytes o exceso de caracteres de reemplazo
       const reemplazos = (contenido.match(/\uFFFD/g) || []).length;
       if (contenido.indexOf('\u0000') !== -1 || reemplazos > contenido.length * 0.05) {
+        mostrarEstadoUpload('error', f.name);
         mostrar(textos().errorBinario, true);
         return;
       }
-      setValor(texto, contenido);
+      texto.value = contenido;
       nombreArchivo = f.name;
+      const kb = Math.max(1, Math.round(f.size / 1024));
+      mostrarEstadoUpload('success', f.name);
+      const sub = document.getElementById('subtituloArchivo');
+      if (sub) sub.textContent = kb + ' KB';
       mostrar(textos().archivoCargado + f.name);
     };
-    lector.onerror = () => mostrar(textos().errorLectura, true);
+    lector.onerror = () => {
+      mostrarEstadoUpload('error', f.name);
+      mostrar(textos().errorLectura, true);
+    };
     lector.readAsText(f, 'utf-8'); // encoding explícito, no depender del default
   };
 
   texto.addEventListener('input', () => { nombreArchivo = null; }); // editado a mano: ya no es "el archivo"
 
-  // descarga del ejemplo: Blob UTF-8 + <a download> (la UI corre en un
-  // iframe con APIs de browser; el main thread no tiene filesystem)
-  document.getElementById('descargarEjemplo').addEventListener('click', () => {
+  // --- descarga del ejemplo: Blob UTF-8 + <a download> ---
+  function descargarEjemplo() {
     const blob = new Blob([EXAMPLE_MARKDOWN], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -502,10 +718,67 @@ flowchart TD
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+  document.getElementById('descargarEjemplo').addEventListener('click', descargarEjemplo);
+
+  // --- caption dinámico del Layout style + sub-opciones de Swimlanes ---
+  const DESC_LAYOUT = { classic: 'layoutDescClassic', cards: 'layoutDescCards', swimlanes: 'layoutDescSwimlanes', table: 'layoutDescTable' };
+  function actualizarOpcionesLane() {
+    const valor = selectorLayout.value || 'classic';
+    opcionesSwimlanes.classList.toggle('oculto', valor !== 'swimlanes');
+    document.getElementById('ayudaLayout').textContent = textos()[DESC_LAYOUT[valor] || 'layoutDescClassic'];
+  }
+  selectorLayout.addEventListener('change', actualizarOpcionesLane);
+
+  function aplicarIdioma(lang) {
+    idiomaActual = lang;
+    const tx = textos();
+    for (const id of ['tabInput', 'tabOptions', 'tabAbout',
+      'introUpload', 'labelArchivo', 'dropTitulo', 'dropSub', 'browse', 'labelPegar', 'ayudaEjemplo',
+      'seccionGeneral', 'labelRowDocs', 'textoDocs', 'ayudaDocs',
+      'labelRowEdge', 'textoEdgeCases', 'ayudaEdgeCases',
+      'labelRowRepetir', 'textoRepetirFlow', 'ayudaRepetirFlow',
+      'seccionLayoutTitulo', 'introLayout', 'labelLayout',
+      'labelLaneReingreso', 'ayudaLaneReingreso', 'labelLaneAgrupacion', 'ayudaLaneAgrupacion', 'labelLaneOrientacion', 'ayudaLaneOrientacion',
+      'labelRowOrganizacion', 'textoSoloDensos', 'ayudaSoloDensos',
+      'seccionFlowTitulo', 'labelDireccion', 'ayudaDireccion',
+      'seccionLanguageTitulo', 'labelIdioma', 'ayudaIdioma',
+      'aboutResumen', 'aboutComoUsarTitulo', 'aboutPaso1', 'aboutPaso2', 'aboutPaso3', 'aboutPaso4', 'aboutPaso5', 'aboutTip',
+      'aboutRecursosTitulo', 'aboutRecursoFigma', 'aboutRecursoMermaid', 'aboutRecursoFigui',
+      'aboutOpenSourceTitulo', 'aboutOpenSourceTexto', 'aboutRepoLink',
+      'aboutFeedbackTitulo', 'aboutFeedbackTexto', 'aboutCreatorTitulo', 'aboutCreatorTexto',
+      'aboutSupportTitulo', 'aboutSupportTexto', 'cancelar']) {
+      document.getElementById(id).textContent = tx[id];
+    }
+    document.getElementById('descargarEjemplo').textContent = tx.descargarEjemplo;
+    botonGenerar.textContent = tx.generar;
+    actualizarOpcionesLane(); // el caption dinámico del layout también cambia de idioma
+  }
+
+  function mostrar(mensaje, esError) {
+    status.textContent = mensaje;
+    status.className = esError ? 'error' : '';
+  }
+
+  selectorIdioma.addEventListener('change', () => {
+    aplicarIdioma(selectorIdioma.value);
+    parent.postMessage({ pluginMessage: { type: 'cambiar-idioma', lang: idiomaActual } }, '*');
   });
 
-  document.getElementById('generar').addEventListener('click', () => {
-    const contenido = leerValor(texto) || '';
+  // --- links externos del About: figma.openExternal en el main thread ---
+  for (const link of document.querySelectorAll('[data-url]')) {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      parent.postMessage({ pluginMessage: { type: 'abrir-url', url: link.getAttribute('data-url') } }, '*');
+    });
+  }
+
+  document.getElementById('cancelar').addEventListener('click', () => {
+    parent.postMessage({ pluginMessage: { type: 'cancelar' } }, '*');
+  });
+
+  botonGenerar.addEventListener('click', () => {
+    const contenido = texto.value || '';
     if (!contenido.trim()) {
       mostrar(textos().errorVacio, true);
       return;
@@ -514,15 +787,15 @@ flowchart TD
     parent.postMessage({ pluginMessage: {
       type: 'generar',
       markdown: contenido,
-      generarDocs: leerCheck(docs),
-      separarEdgeCases: leerCheck(edgeCases),
-      repetirFlow: leerCheck(repetirFlow),
-      layoutStyle: leerValor(selectorLayout),
-      soloDensos: leerCheck(soloDensos),
-      laneReingreso: leerValor(laneReingreso),
-      laneAgrupacion: leerValor(laneAgrupacion),
-      laneOrientacion: leerValor(laneOrientacion),
-      direccion: leerValor(selectorDireccion),
+      generarDocs: docs.checked,
+      separarEdgeCases: edgeCases.checked,
+      repetirFlow: repetirFlow.checked,
+      layoutStyle: selectorLayout.value,
+      soloDensos: soloDensos.checked,
+      laneReingreso: laneReingreso.value,
+      laneAgrupacion: laneAgrupacion.value,
+      laneOrientacion: laneOrientacion.value,
+      direccion: selectorDireccion.value,
       lang: idiomaActual,
       nombreArchivo: nombreArchivo,
     } }, '*');
@@ -532,17 +805,17 @@ flowchart TD
     const msg = evento.data.pluginMessage;
     if (!msg) return;
     if (msg.type === 'estado-inicial') {
-      setCheck(docs, msg.generarDocs);             // settings persistidos entre sesiones
-      setCheck(edgeCases, msg.separarEdgeCases);
-      setCheck(repetirFlow, msg.repetirFlow);
-      setValor(selectorLayout, msg.layoutStyle);
-      setCheck(soloDensos, msg.soloDensos);
-      setValor(laneReingreso, msg.laneReingreso);
-      setValor(laneAgrupacion, msg.laneAgrupacion);
-      setValor(laneOrientacion, msg.laneOrientacion);
+      docs.checked = msg.generarDocs;             // settings persistidos entre sesiones
+      edgeCases.checked = msg.separarEdgeCases;
+      repetirFlow.checked = msg.repetirFlow;
+      selectorLayout.value = msg.layoutStyle;
+      soloDensos.checked = msg.soloDensos;
+      laneReingreso.value = msg.laneReingreso;
+      laneAgrupacion.value = msg.laneAgrupacion;
+      laneOrientacion.value = msg.laneOrientacion;
       actualizarOpcionesLane();
-      setValor(selectorDireccion, msg.direccion);
-      setValor(selectorIdioma, msg.lang);
+      selectorDireccion.value = msg.direccion;
+      selectorIdioma.value = msg.lang;
       if (msg.lang !== idiomaActual) aplicarIdioma(msg.lang);
     } else if (msg.type === 'ok') {
       mostrar(msg.resumen + (msg.warnings.length ? '\n' + textos().avisos + '\n- ' + msg.warnings.join('\n- ') : ''));

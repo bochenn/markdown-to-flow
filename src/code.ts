@@ -59,7 +59,9 @@ const HEADERS_CONOCIDOS: Partial<Record<TipoSeccion, string>> = {
   assumptions: 'canvas.cardAssumptions',
 };
 
-figma.showUI(__html__, { width: 380, height: 660 });
+// 600 de ancho por el anatomy de UI3; el título va en la barra NATIVA de la
+// ventana del plugin (la UI no dibuja header propio)
+figma.showUI(__html__, { width: 600, height: 560, title: 'Markdown to Flow' });
 
 // Al abrir el plugin, mandar a la UI el estado persistido de los settings.
 Promise.all([
@@ -421,7 +423,7 @@ async function generar(markdown: string, o: Opciones): Promise<{ resumen: string
 
 // URLs que el About de la UI puede pedir abrir (figma.openExternal)
 const URLS_PERMITIDAS = [
-  'https://github.com/rogie/figui3',
+  'https://www.figma.com/community/file/1486123838948777078', // librería Figma UI3
   'https://mermaid.js.org/syntax/flowchart.html',
   'https://developers.figma.com/docs/plugins/',
   'https://github.com/bochenn/markdown-to-flow',
@@ -458,6 +460,11 @@ figma.ui.onmessage = async (msg: {
   // por mensaje); figma.openExternal es el único camino confiable desde la UI
   if (msg.type === 'abrir-url') {
     if (msg.url && URLS_PERMITIDAS.indexOf(msg.url) !== -1) figma.openExternal(msg.url);
+    return;
+  }
+  // Cancel / cerrar del panel (footer y header del modal)
+  if (msg.type === 'cancelar') {
+    figma.closePlugin();
     return;
   }
   if (msg.type !== 'generar') return;
