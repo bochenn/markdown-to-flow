@@ -2,20 +2,19 @@
 <html>
 <head>
 <meta charset="utf-8">
+<!-- FIGUI3:CSS -->
 <style>
-  body { font-family: Inter, sans-serif; font-size: 12px; margin: 16px; color: #333; }
-  h2 { font-size: 14px; margin: 0 0 12px; }
-  label { display: block; margin: 12px 0 4px; font-weight: 600; }
-  textarea { width: 100%; box-sizing: border-box; height: 150px; font-family: monospace; font-size: 11px; }
-  .toggle { display: flex; align-items: flex-start; gap: 6px; margin: 14px 0 0; font-weight: 400; cursor: pointer; }
-  .toggle input { margin: 2px 0 0; }
-  .idioma { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; }
-  .idioma label { margin: 0; }
-  button { margin-top: 14px; padding: 8px 16px; background: #18a0fb; color: #fff; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; }
-  button:hover { background: #0d8de3; }
-  #status { margin-top: 12px; white-space: pre-wrap; }
-  #status.error { color: #c33; }
-  .ayuda { margin: 4px 0 0; color: #777; }
+  /* solo layout del panel: los controles los estila FigUI3 (light/dark
+     automático vía las variables --figma-color-* que inyecta Figma) */
+  body { margin: 16px; display: flex; flex-direction: column; gap: 12px; font-family: Inter, sans-serif; font-size: 12px; color: var(--figma-color-text, #333); }
+  h2 { font-size: 14px; margin: 0; }
+  fig-field { display: block; }
+  fig-field label { font-weight: 600; }
+  fig-input-text[multiline] { --fig-input-text-height: 150px; width: 100%; }
+  #opcionesSwimlanes { display: none; flex-direction: column; gap: 12px; }
+  #status { white-space: pre-wrap; }
+  #status.error { color: var(--figma-color-text-danger, #c33); }
+  .ayuda { margin: 0; color: var(--figma-color-text-secondary, #777); }
 </style>
 </head>
 <body>
@@ -23,86 +22,78 @@
        storage limpio se ve en inglés sin re-render ni parpadeo -->
   <h2 id="tituloPanel">Markdown → Flow diagram</h2>
 
-  <label for="archivo" id="labelArchivo">User flow file (.md, .markdown or .txt)</label>
-  <input type="file" id="archivo" accept=".md,.markdown,.txt">
+  <fig-field>
+    <label for="archivo" id="labelArchivo">User flow file (.md, .markdown or .txt)</label>
+    <!-- input nativo: el file picker de FigUI3 está orientado a imágenes -->
+    <input type="file" id="archivo" accept=".md,.markdown,.txt">
+  </fig-field>
   <p class="ayuda" id="ayudaArchivo">An exact structure isn't required: the plugin will generate the best it can from whatever it finds.</p>
 
-  <label for="texto" id="labelPegar">…or paste the content here</label>
-  <textarea id="texto" placeholder="flowchart TD&#10;    A([Start]) --> B[Step]"></textarea>
+  <fig-field>
+    <label id="labelPegar">…or paste the content here</label>
+    <fig-input-text multiline id="texto" placeholder="flowchart TD&#10;    A([Start]) --> B[Step]"></fig-input-text>
+  </fig-field>
 
-  <label class="toggle">
-    <input type="checkbox" id="docs" checked>
-    <span id="textoDocs">Also generate documentation cards (steps, decisions, assumptions, etc.)</span>
-  </label>
+  <fig-switch id="docs" checked><span id="textoDocs">Also generate documentation cards (steps, decisions, assumptions, etc.)</span></fig-switch>
+  <fig-switch id="edgeCases"><span id="textoEdgeCases">Separate edge cases and errors into their own flow</span></fig-switch>
+  <fig-switch id="repetirFlow"><span id="textoRepetirFlow">Repeat flow summary card at the start of each flow</span></fig-switch>
 
-  <label class="toggle">
-    <input type="checkbox" id="edgeCases">
-    <span id="textoEdgeCases">Separate edge cases and errors into their own flow</span>
-  </label>
-
-  <label class="toggle">
-    <input type="checkbox" id="repetirFlow">
-    <span id="textoRepetirFlow">Repeat flow summary card at the start of each flow</span>
-  </label>
-
-  <div class="idioma">
+  <fig-field direction="horizontal">
     <label for="layoutStyle" id="labelLayout">Layout style</label>
-    <select id="layoutStyle">
+    <fig-dropdown id="layoutStyle" value="classic">
       <option value="classic" selected>Classic</option>
       <option value="cards">Cards</option>
       <option value="swimlanes">Swimlanes</option>
-      <option value="table" disabled>Table (soon)</option>
-    </select>
-  </div>
+      <option value="table">Table</option>
+    </fig-dropdown>
+  </fig-field>
 
-  <div id="opcionesSwimlanes" style="display: none;">
-    <div class="idioma">
+  <div id="opcionesSwimlanes">
+    <fig-field direction="horizontal">
       <label for="laneReingreso" id="labelLaneReingreso">Re-entry style</label>
-      <select id="laneReingreso">
+      <fig-dropdown id="laneReingreso" value="junction">
         <option value="junction" selected>Junction node</option>
         <option value="badge">Text badge</option>
-      </select>
-    </div>
-    <div class="idioma">
+      </fig-dropdown>
+    </fig-field>
+    <fig-field direction="horizontal">
       <label for="laneAgrupacion" id="labelLaneAgrupacion">Lane grouping</label>
-      <select id="laneAgrupacion">
+      <fig-dropdown id="laneAgrupacion" value="primero">
         <option value="primero" selected>First re-entry</option>
         <option value="duplicar">Duplicate per re-entry</option>
-      </select>
-    </div>
-    <div class="idioma">
+      </fig-dropdown>
+    </fig-field>
+    <fig-field direction="horizontal">
       <label for="laneOrientacion" id="labelLaneOrientacion">Lane orientation</label>
-      <select id="laneOrientacion">
+      <fig-dropdown id="laneOrientacion" value="horizontal">
         <option value="horizontal" selected>Horizontal</option>
         <option value="vertical">Vertical</option>
-      </select>
-    </div>
+      </fig-dropdown>
+    </fig-field>
   </div>
 
-  <label class="toggle">
-    <input type="checkbox" id="soloDensos" checked>
-    <span id="textoSoloDensos">Apply simplified layout only to dense flows</span>
-  </label>
+  <fig-switch id="soloDensos" checked><span id="textoSoloDensos">Apply simplified layout only to dense flows</span></fig-switch>
 
-  <div class="idioma">
+  <fig-field direction="horizontal">
     <label for="direccion" id="labelDireccion">Flow direction</label>
-    <select id="direccion">
+    <fig-dropdown id="direccion" value="vertical">
       <option value="vertical" selected>Vertical</option>
       <option value="horizontal">Horizontal</option>
-    </select>
-  </div>
+    </fig-dropdown>
+  </fig-field>
 
-  <div class="idioma">
+  <fig-field direction="horizontal">
     <label for="idioma" id="labelIdioma">Output language</label>
-    <select id="idioma">
+    <fig-dropdown id="idioma" value="en">
       <option value="en" selected>English</option>
       <option value="es">Español</option>
-    </select>
-  </div>
+    </fig-dropdown>
+  </fig-field>
 
-  <button id="generar">Generate</button>
+  <fig-button variant="primary" id="generar">Generate</fig-button>
   <div id="status"></div>
 
+<!-- FIGUI3:JS -->
 <script>
   // Copia local de las claves ui.* — mantener en sincronía con src/i18n.ts
   // (el iframe no tiene bundler, no puede importar el diccionario TS).
@@ -166,15 +157,35 @@
   const laneReingreso = document.getElementById('laneReingreso');
   const laneAgrupacion = document.getElementById('laneAgrupacion');
   const laneOrientacion = document.getElementById('laneOrientacion');
-
-  // los sub-settings de Swimlanes solo se muestran cuando aplica
-  function actualizarOpcionesLane() {
-    opcionesSwimlanes.style.display = selectorLayout.value === 'swimlanes' ? 'block' : 'none';
-  }
-  selectorLayout.addEventListener('change', actualizarOpcionesLane);
   const selectorDireccion = document.getElementById('direccion');
   const selectorIdioma = document.getElementById('idioma');
   const status = document.getElementById('status');
+
+  // Lectura/escritura tolerante de los web components de FigUI3: la propiedad
+  // cuando el elemento ya está upgradeado, el atributo como fallback (el
+  // estado inicial puede llegar antes de que el módulo registre los tags).
+  const leerValor = (el) => (el.value !== undefined && el.value !== null && el.value !== '' ? el.value : el.getAttribute('value'));
+  const leerCheck = (el) => (typeof el.checked === 'boolean' ? el.checked : el.hasAttribute('checked'));
+  const setValor = (el, v) => {
+    el.setAttribute('value', v);
+    if ('value' in el) el.value = v;
+    const opt = el.querySelector && el.querySelector(`option[value="${v}"]`);
+    if (opt) {
+      for (const o of el.querySelectorAll('option')) o.removeAttribute('selected');
+      opt.setAttribute('selected', '');
+    }
+  };
+  const setCheck = (el, v) => {
+    if (v) el.setAttribute('checked', '');
+    else el.removeAttribute('checked');
+    if ('checked' in el) el.checked = !!v;
+  };
+
+  // los sub-settings de Swimlanes solo se muestran cuando aplica
+  function actualizarOpcionesLane() {
+    opcionesSwimlanes.style.display = leerValor(selectorLayout) === 'swimlanes' ? 'flex' : 'none';
+  }
+  selectorLayout.addEventListener('change', actualizarOpcionesLane);
 
   let idiomaActual = 'en';
   let nombreArchivo = null;
@@ -195,10 +206,10 @@
     status.className = esError ? 'error' : '';
   }
 
-  selectorIdioma.onchange = () => {
-    aplicarIdioma(selectorIdioma.value);
+  selectorIdioma.addEventListener('change', () => {
+    aplicarIdioma(leerValor(selectorIdioma));
     parent.postMessage({ pluginMessage: { type: 'cambiar-idioma', lang: idiomaActual } }, '*');
-  };
+  });
 
   archivo.onchange = () => {
     const f = archivo.files[0];
@@ -212,7 +223,7 @@
         mostrar(textos().errorBinario, true);
         return;
       }
-      texto.value = contenido;
+      setValor(texto, contenido);
       nombreArchivo = f.name;
       mostrar(textos().archivoCargado + f.name);
     };
@@ -220,46 +231,47 @@
     lector.readAsText(f, 'utf-8'); // encoding explícito, no depender del default
   };
 
-  texto.oninput = () => { nombreArchivo = null; }; // contenido editado a mano: ya no es "el archivo"
+  texto.addEventListener('input', () => { nombreArchivo = null; }); // editado a mano: ya no es "el archivo"
 
-  document.getElementById('generar').onclick = () => {
-    if (!texto.value.trim()) {
+  document.getElementById('generar').addEventListener('click', () => {
+    const contenido = leerValor(texto) || '';
+    if (!contenido.trim()) {
       mostrar(textos().errorVacio, true);
       return;
     }
     mostrar(textos().generando);
     parent.postMessage({ pluginMessage: {
       type: 'generar',
-      markdown: texto.value,
-      generarDocs: docs.checked,
-      separarEdgeCases: edgeCases.checked,
-      repetirFlow: repetirFlow.checked,
-      layoutStyle: selectorLayout.value,
-      soloDensos: soloDensos.checked,
-      laneReingreso: laneReingreso.value,
-      laneAgrupacion: laneAgrupacion.value,
-      laneOrientacion: laneOrientacion.value,
-      direccion: selectorDireccion.value,
+      markdown: contenido,
+      generarDocs: leerCheck(docs),
+      separarEdgeCases: leerCheck(edgeCases),
+      repetirFlow: leerCheck(repetirFlow),
+      layoutStyle: leerValor(selectorLayout),
+      soloDensos: leerCheck(soloDensos),
+      laneReingreso: leerValor(laneReingreso),
+      laneAgrupacion: leerValor(laneAgrupacion),
+      laneOrientacion: leerValor(laneOrientacion),
+      direccion: leerValor(selectorDireccion),
       lang: idiomaActual,
       nombreArchivo: nombreArchivo,
     } }, '*');
-  };
+  });
 
   onmessage = (evento) => {
     const msg = evento.data.pluginMessage;
     if (!msg) return;
     if (msg.type === 'estado-inicial') {
-      docs.checked = msg.generarDocs;             // settings persistidos entre sesiones
-      edgeCases.checked = msg.separarEdgeCases;
-      repetirFlow.checked = msg.repetirFlow;
-      selectorLayout.value = msg.layoutStyle;
-      soloDensos.checked = msg.soloDensos;
-      laneReingreso.value = msg.laneReingreso;
-      laneAgrupacion.value = msg.laneAgrupacion;
-      laneOrientacion.value = msg.laneOrientacion;
+      setCheck(docs, msg.generarDocs);             // settings persistidos entre sesiones
+      setCheck(edgeCases, msg.separarEdgeCases);
+      setCheck(repetirFlow, msg.repetirFlow);
+      setValor(selectorLayout, msg.layoutStyle);
+      setCheck(soloDensos, msg.soloDensos);
+      setValor(laneReingreso, msg.laneReingreso);
+      setValor(laneAgrupacion, msg.laneAgrupacion);
+      setValor(laneOrientacion, msg.laneOrientacion);
       actualizarOpcionesLane();
-      selectorDireccion.value = msg.direccion;
-      selectorIdioma.value = msg.lang;
+      setValor(selectorDireccion, msg.direccion);
+      setValor(selectorIdioma, msg.lang);
       if (msg.lang !== idiomaActual) aplicarIdioma(msg.lang);
     } else if (msg.type === 'ok') {
       mostrar(msg.resumen + (msg.warnings.length ? '\n' + textos().avisos + '\n- ' + msg.warnings.join('\n- ') : ''));

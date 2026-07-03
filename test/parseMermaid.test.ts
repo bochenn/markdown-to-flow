@@ -10,6 +10,7 @@ import {
   esFlujoDenso,
   descomponerEnRamas,
   agruparEnCarriles,
+  descomposicionATabla,
   SEPARACION_MIN_COLUMNA,
   SEPARACION_MIN_FILA,
 } from '../src/layoutDiagram.ts';
@@ -307,6 +308,30 @@ test('descomponerEnRamas: FLW03 en 6 tarjetas con reingresos y preámbulo', () =
 
   // ids en orden DFS para los mini-flujos de Swimlanes
   assert.deepEqual(talla.ids, ['B', 'B1', 'CO']);
+});
+
+test('descomposicionATabla: FLW03 en 6 filas con proceso, desenlaces y reingreso', () => {
+  const diagramas = analizarDocumento(edgeMd).diagramas;
+  const desc = descomponerEnRamas(parsearFlowchart(diagramas[2].codigo))!;
+  const tabla = descomposicionATabla(desc, 'es');
+  assert.deepEqual(tabla.headers, ['Disparador', 'Qué hace el sistema', 'Resultado', 'Reingresa a']);
+  assert.equal(tabla.filas.length, 6);
+
+  const porTrigger = new Map(tabla.filas.map((f) => [f[0], f]));
+  const precio = porTrigger.get('Cambió el precio antes de pagar')!;
+  assert.ok(precio[1].includes('Acepta nuevo precio?')); // la decisión queda en "qué hace"
+  assert.equal(precio[2], 'No: Vuelve al carrito');
+  assert.equal(precio[3], 'Sí: Reingresa a REV');
+
+  // rama con decisión de dos desenlaces sin reingreso → ambos en "Resultado"
+  const sesion = porTrigger.get('Sesión de invitado expira por inactividad')!;
+  assert.ok(sesion[2].includes('Sí:') && sesion[2].includes(' / ') && sesion[2].includes('No:'));
+  assert.equal(sesion[3], '—');
+
+  // rama lineal: último paso como resultado
+  const talla = porTrigger.get('Talla se agota mientras está en carrito')!;
+  assert.equal(talla[2], 'Ofrece tallas alternativas o quitar ítem');
+  assert.equal(talla[3], 'Reingresa a CO');
 });
 
 test('agruparEnCarriles: FLW03 por primer reingreso, y duplicar reparte las ramas multi-reingreso', () => {

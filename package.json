@@ -4,13 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/code.ts --bundle --outfile=dist/code.js --target=es2017",
+    "build": "esbuild src/code.ts --bundle --outfile=dist/code.js --target=es2017 && node scripts/build-ui.mjs",
     "watch": "npm run build -- --watch",
     "test": "node --test test/parseMermaid.test.ts test/parseMarkdown.test.ts test/i18n.test.ts test/texto.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@figma/plugin-typings": "^1.100.0",
+    "@rogieking/figui3": "^6.9.5",
     "esbuild": "^0.25.0",
     "typescript": "^5.6.0"
   }

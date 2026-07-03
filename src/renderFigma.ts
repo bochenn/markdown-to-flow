@@ -322,6 +322,13 @@ export function createShapeComponents(x: number, y: number): ComponentesBase {
   set.strokes = [{ type: 'SOLID', color: { r: 111 / 255, g: 62 / 255, b: 205 / 255 } }]; // #6F3ECD
   set.strokeWeight = 2;
   set.dashPattern = [8, 6];
+  // autolayout del contenedor: variantes en fila, centradas (alturas dispares)
+  set.layoutMode = 'HORIZONTAL';
+  set.primaryAxisSizingMode = 'AUTO';
+  set.counterAxisSizingMode = 'AUTO';
+  set.counterAxisAlignItems = 'CENTER';
+  set.paddingLeft = set.paddingRight = set.paddingTop = set.paddingBottom = 16;
+  set.itemSpacing = 32;
   return { set, variantes: resultado, label, annotation };
 }
 
@@ -933,12 +940,18 @@ export function createSectionCard(titulo: string, bloques: BloqueCard[], x: numb
   if (bloques.length === 0) {
     agregarBloqueTexto([]); // "(sin contenido)"
   }
+  let huboLeyenda = false;
   for (const bloque of bloques) {
     if (bloque.tipo === 'texto') {
       agregarTexto(bloque.lineas);
     } else {
+      if (esTablaLeyenda(bloque.tabla)) huboLeyenda = true;
       card.appendChild(crearTabla(bloque.tabla, anchoCard - 48, lang, comps));
     }
+  }
+  // la leyenda de formas se completa con la de conectores (generada por el plugin)
+  if (huboLeyenda) {
+    card.appendChild(crearLeyendaConectores(lang));
   }
 
   card.x = x;
@@ -1114,6 +1127,11 @@ const LANE_GAP_RAMAS = 48;
 // Mini-flujo Classic de una rama: subgrafo real (nodos + edges propios) con
 // el layout existente en espaciado compacto. Devuelve los nodos creados y su
 // bounding box local.
+// escala default: la compacta de los carriles; los sub-flujos Classic pasan
+// escala completa (x 1, espaciado Y 240)
+interface EscalaMiniFlujo { x: number; espaciadoY: number }
+const ESCALA_LANE: EscalaMiniFlujo = { x: LANE_ESCALA_X, espaciadoY: LANE_ESPACIADO_Y };
+
 async function crearMiniFlujo(
   grafo: Grafo,
   ids: string[],
@@ -1123,6 +1141,7 @@ async function crearMiniFlujo(
   lang: Idioma,
   comps: ComponentesBase | null,
   incluirJunctions: boolean,
+  escala: EscalaMiniFlujo = ESCALA_LANE,
 ): Promise<{ nodos: SceneNode[]; ancho: number; alto: number }> {
   const idsUsados = new Set(incluirJunctions ? ids : ids.filter((id) => grafo.nodos.get(id)!.forma !== 'conector'));
   const subGrafo: Grafo = {
@@ -1143,8 +1162,8 @@ async function crearMiniFlujo(
     const estilo = estilos.get(id) || ESTILOS_DEFAULT[nodo.forma];
     const instancia = createDiagramNodeInstance(
       nodo.forma, nodo.texto, estilo,
-      p.x * LANE_ESCALA_X,
-      p.y * (LANE_ESPACIADO_Y / 300),
+      p.x * escala.x,
+      p.y * (escala.espaciadoY / 300),
       comps,
     );
     creados.set(id, instancia);
@@ -1276,6 +1295,96 @@ export async function crearSwimlanesFlujo(
   return nodos;
 }
 
+// ---------------------------------------------------------------------------
+// Classic descompuesto: en flujos densos, cada rama del hub se renderiza como
+// un sub-flujo Classic independiente (FLW03.1, FLW03.2, …) en su propia
+// Section anidada, en grilla de 3 columnas por tamaños reales. La decisión
+// compartida se omite (opción B validada): el título de cada sub-sección
+// nombra el caso y el preámbulo (raíz → hub) va una vez como encabezado.
+// ---------------------------------------------------------------------------
+
+const SUBFLUJOS_POR_FILA = 3;
+const SUBFLUJOS_GAP = 60;
+const ESCALA_CLASSIC: EscalaMiniFlujo = { x: 1, espaciadoY: 240 };
+
+export async function crearSubflujosClassic(
+  grafo: Grafo,
+  desc: DescomposicionCards,
+  flujoLabel: string,
+  estilos: Map<string, EstiloNodo>,
+  lang: Idioma,
+  comps: ComponentesBase | null,
+): Promise<SceneNode[]> {
+  const encabezado = figma.createText();
+  encabezado.fontName = FUENTE;
+  encabezado.fontSize = 14;
+  encabezado.characters = desc.preambulo.map((n) => n.texto.replace(/\n/g, ' ')).join('  →  ');
+  encabezado.fills = pinturaTextoNodo(NEGRO);
+  encabezado.x = 0;
+  encabezado.y = 0;
+
+  // id del flujo padre: primer token del label ("FLW03 - Flujo…" → "FLW03")
+  const idPadre = flujoLabel.split(' ')[0];
+
+  const subSecciones: SectionNode[] = [];
+  for (let i = 0; i < desc.ramas.length; i++) {
+    const rama = desc.ramas[i];
+    const nombre = `${idPadre}.${i + 1} — ${rama.titulo}`;
+    const titulo = crearTituloFlujo(nombre, 0, 0);
+    const mini = await crearMiniFlujo(
+      grafo, rama.ids, 0, titulo.height + 24,
+      estilos, lang, comps, true, ESCALA_CLASSIC,
+    );
+    subSecciones.push(crearSection(nombre, [titulo, ...mini.nodos]));
+  }
+
+  // grilla de 3 columnas debajo del encabezado, por tamaños reales medidos
+  let x = 0;
+  let y = encabezado.height + 40;
+  let filaAlto = 0;
+  subSecciones.forEach((seccion, i) => {
+    if (i % SUBFLUJOS_POR_FILA === 0 && i > 0) {
+      y += filaAlto + SUBFLUJOS_GAP;
+      x = 0;
+      filaAlto = 0;
+    }
+    seccion.x = x;
+    seccion.y = y;
+    x += seccion.width + SUBFLUJOS_GAP;
+    filaAlto = Math.max(filaAlto, seccion.height);
+  });
+
+  return [encabezado, ...subSecciones];
+}
+
+// ---------------------------------------------------------------------------
+// Modo Table: encabezado con el preámbulo + la tabla de casos (reusa el
+// renderer de tablas: nativa en FigJam, simulada en Design). Sin conectores;
+// el reingreso es una celda de texto.
+// ---------------------------------------------------------------------------
+
+const TABLA_FLUJO_ANCHO = 880;
+
+export function crearTablaFlujo(
+  tabla: TablaCard,
+  preambulo: Nodo[],
+  lang: Idioma,
+  comps: ComponentesBase | null,
+): SceneNode[] {
+  const encabezado = figma.createText();
+  encabezado.fontName = FUENTE;
+  encabezado.fontSize = 14;
+  encabezado.characters = preambulo.map((n) => n.texto.replace(/\n/g, ' ')).join('  →  ');
+  encabezado.fills = pinturaTextoNodo(NEGRO);
+  encabezado.x = 0;
+  encabezado.y = 0;
+
+  const nodoTabla = crearTabla(tabla, TABLA_FLUJO_ANCHO, lang, comps);
+  nodoTabla.x = 0;
+  nodoTabla.y = encabezado.height + 24;
+  return [encabezado, nodoTabla];
+}
+
 // Título del flujo (flowLabel) como texto suelto dentro del Section del
 // diagrama — misma tipografía que el header de las cards de documentación.
 export function crearTituloFlujo(label: string, x: number, y: number): TextNode {
@@ -1386,6 +1495,86 @@ const COLORES_LEYENDA = {
 };
 
 const normalizarTexto = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+// tabla de leyenda de formas: headers "Elemento" + "Forma"
+function esTablaLeyenda(tabla: TablaCard): boolean {
+  return tabla.headers.length >= 2
+    && normalizarTexto(tabla.headers[0]).indexOf('elemento') !== -1
+    && normalizarTexto(tabla.headers[1]).indexOf('forma') !== -1;
+}
+
+// Subsecci\u00f3n "Conectores" al pie de la card de leyenda: mini-muestra dibujada
+// + descripci\u00f3n por tipo. Contenido generado por el plugin \u2192 va en el idioma
+// del panel, no en el del archivo.
+function crearLeyendaConectores(lang: Idioma): FrameNode {
+  const bloque = figma.createFrame();
+  bloque.name = t('canvas.leyendaConectores', lang);
+  bloque.layoutMode = 'VERTICAL';
+  bloque.primaryAxisSizingMode = 'AUTO';
+  bloque.counterAxisSizingMode = 'AUTO';
+  bloque.itemSpacing = 10;
+  bloque.fills = [];
+
+  const titulo = figma.createText();
+  titulo.fontName = FUENTE_BOLD;
+  titulo.fontSize = 13;
+  titulo.characters = t('canvas.leyendaConectores', lang);
+  titulo.fills = [{ type: 'SOLID', color: { r: 0.2, g: 0.2, b: 0.22 } }];
+  bloque.appendChild(titulo);
+
+  const muestraLinea = (color: Color, dashed: boolean): SceneNode => {
+    const linea = figma.createVector();
+    linea.vectorPaths = [{ windingRule: 'NONE', data: 'M 0 7 L 40 7 M 33 3 L 40 7 L 33 11' }];
+    linea.strokes = [{ type: 'SOLID', color }];
+    linea.strokeWeight = 2;
+    linea.strokeCap = 'ROUND';
+    if (dashed) linea.dashPattern = [6, 6];
+    linea.resize(42, 14);
+    return linea;
+  };
+  const muestraBadge = (): SceneNode => {
+    const pill = figma.createFrame();
+    pill.layoutMode = 'HORIZONTAL';
+    pill.primaryAxisSizingMode = 'AUTO';
+    pill.counterAxisSizingMode = 'AUTO';
+    pill.paddingLeft = pill.paddingRight = 6;
+    pill.paddingTop = pill.paddingBottom = 2;
+    pill.cornerRadius = 8;
+    pill.fills = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }];
+    const txt = figma.createText();
+    txt.fontName = FUENTE;
+    txt.fontSize = 9;
+    txt.characters = 'label';
+    txt.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+    pill.appendChild(txt);
+    return pill;
+  };
+
+  const filas: [SceneNode, string][] = [
+    [muestraLinea(ESTILO_CONECTOR.color, false), t('leyenda.conNormal', lang)],
+    [muestraLinea(COLOR_SALTO_LARGO, false), t('leyenda.conSalto', lang)],
+    [muestraLinea(ESTILO_CONECTOR.color, true), t('leyenda.conEdge', lang)],
+    [muestraBadge(), t('leyenda.conLabel', lang)],
+  ];
+  for (const [muestra, descripcion] of filas) {
+    const fila = figma.createFrame();
+    fila.layoutMode = 'HORIZONTAL';
+    fila.primaryAxisSizingMode = 'AUTO';
+    fila.counterAxisSizingMode = 'AUTO';
+    fila.counterAxisAlignItems = 'CENTER';
+    fila.itemSpacing = 10;
+    fila.fills = [];
+    fila.appendChild(muestra);
+    const texto = figma.createText();
+    texto.fontName = FUENTE_REGULAR;
+    texto.fontSize = 12;
+    texto.characters = descripcion;
+    texto.fills = [{ type: 'SOLID', color: { r: 0.2, g: 0.2, b: 0.22 } }];
+    fila.appendChild(texto);
+    bloque.appendChild(fila);
+  }
+  return bloque;
+}
 
 // Mapeo directo de la tabla de leyenda (caso conocido): cada fila recibe su
 // ícono según la columna "Elemento", tenga o no el token en el texto.
@@ -1511,10 +1700,7 @@ function crearTabla(tabla: TablaCard, anchoDisponible: number, lang: Idioma, com
 
   // tabla de leyenda (caso conocido): headers "Elemento" + "Forma" → la celda
   // de Forma lleva SIEMPRE su ícono mapeado por el texto de Elemento
-  const esLeyenda = comps
-    && tabla.headers.length >= 2
-    && normalizarTexto(tabla.headers[0]).indexOf('elemento') !== -1
-    && normalizarTexto(tabla.headers[1]).indexOf('forma') !== -1;
+  const esLeyenda = comps && esTablaLeyenda(tabla);
 
   const crearFila = (valores: string[], esHeader: boolean) => {
     const fila = figma.createFrame();

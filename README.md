@@ -26,13 +26,17 @@ siga un formato exacto — el plugin genera lo mejor posible con lo que haya.
   `[...]` → rectángulo, `{...}` → rombo, `[/.../]` → paralelogramo, y su color
   sale del `classDef` del propio mermaid (con default por forma si no tiene clase).
 - En **Figma Design**: un único **Component Set `user-flow-elements`** (borde
-  dashed `#6F3ECD`) con 7 variantes (`Type=Start / End` círculo,
+  dashed `#6F3ECD`, autolayout horizontal con padding 16 y gap 32) con 7
+  variantes (`Type=Start / End` círculo,
   `Type=Process`, `Type=Decision`, `Type=Options / Input`, `Type=Connector`,
   `Type=Label` y `Type=Annotation` — la nota amarilla de reingreso, 200px de
   ancho con alto hug) en el Section "🧩 Base components"; los **tokens de
   notación** de la leyenda (`([ ])`, `[ ]`, `{ }`, `((CO))`) se renderizan
   como **íconos reales de 24px** (instances; los `((CO))` con sus iniciales
-  adentro), la tabla de leyenda mapea **cada fila por su "Elemento"** al ícono
+  adentro), la card de leyenda suma una **subsección "Conectores"** generada
+por el plugin (muestra dibujada + descripción en el idioma del panel: sólida
+`#9747FF`, salto largo `#0D99FF`, punteada de edge case y el badge de label),
+la tabla de leyenda mapea **cada fila por su "Elemento"** al ícono
   y color correspondientes (éxito verde, error rojo, reingreso gris) y las
   cards con tablas anchas se ensanchan solas. Los conectores simulados llevan
   **círculo relleno al inicio y flecha al final** (geometría equivalente a los
@@ -116,8 +120,14 @@ siga un formato exacto — el plugin genera lo mejor posible con lo que haya.
   como fila cruda con aviso. El texto alrededor de una tabla se renderiza
   normal. Todos los `<br>`/`<br/>`/`<br />` del origen se vuelven saltos de
   línea reales (`normalizeLineBreaks`, aplicado en nodos, labels, cards y celdas).
-- **Estilos de layout** (`Layout style`, persistido): **Classic** (default, el
-  flowchart de siempre) y **Cards** — para flujos densos cuya complejidad es
+- **Estilos de layout** (`Layout style`, persistido): **Classic** (default) —
+  en flujos densos se **descompone en sub-flujos independientes** (`FLW03.1`,
+  `FLW03.2`, …), uno por rama del hub, cada uno en su Section anidada dentro
+  de la Section del flujo padre, en grilla de 3 columnas por tamaños reales;
+  la decisión compartida se omite (el título de la sub-sección nombra el caso
+  y el preámbulo raíz→hub va una vez como encabezado); sin hub razonable →
+  diagrama único con warning; FLW01/02 (simples) siguen como diagrama único.
+  **Cards** — para flujos densos cuya complejidad es
   topológica ("muchos triggers → decisión compartida → muchos resultados"):
   detecta el hub (mayor fan-out), muestra el preámbulo raíz→hub una vez y
   convierte cada rama en una **tarjeta autocontenida** (trigger como título,
@@ -133,8 +143,11 @@ siga un formato exacto — el plugin genera lo mejor posible con lo que haya.
   Classic real de cada rama adentro (subgrafo + layout compacto), y tres
   sub-settings persistidos en el panel — *Re-entry style* (junction local o
   badge de texto), *Lane grouping* (primer reingreso o duplicar la rama en
-  cada carril) y *Lane orientation* (horizontal/vertical). Table sigue como
-  "(soon)". Los **conectores de salto largo** (desviados por carril) van en
+  cada carril) y *Lane orientation* (horizontal/vertical). **Table**: una
+  fila por caso — Disparador | Qué hace el sistema | Resultado | Reingresa a
+  (en ramas con decisión, "Resultado" lista todos los desenlaces con su
+  label) — reusando el renderer de tablas (nativa en FigJam, simulada en
+  Design), con headers en el idioma del panel. Los **conectores de salto largo** (desviados por carril) van en
   `#0D99FF` para distinguirlos de los pasos secuenciales.
 - **Dirección de flujo configurable** (Vertical/Horizontal, default Vertical,
   persistida): tiene prioridad sobre la dirección del mermaid (que se parsea
@@ -204,9 +217,17 @@ src/layoutDiagram.ts  # niveles por BFS (tolera ciclos), minimización de cruces
 src/renderFigma.ts    # createStickyLike, createConnectorLike, createSectionCard, Sections;
                       # todo el branching por figma.editorType vive acá
 src/code.ts           # orquestación: mensajería con la UI, toggle, clientStorage, fuentes
-src/ui.html           # UI: input de archivo, textarea, toggle de documentación, status
+src/ui.html           # UI con componentes FigUI3 (fig-switch, fig-dropdown, fig-button…)
+scripts/build-ui.mjs  # inline de FigUI3 (CSS+JS de node_modules) → dist/ui.html;
+                      # el manifest apunta a dist/ y networkAccess queda en "none"
 test/                 # tests con node:test contra el archivo de ejemplo
 ```
+
+La UI usa [FigUI3](https://github.com/rogie/figui3) (estilo nativo de Figma
+UI3, theming light/dark automático vía `--figma-color-*`). Como el manifest
+bloquea la red del iframe (`networkAccess: none`), la librería se bundlea
+localmente en el build en vez de cargarse por CDN — por eso hay que correr
+`npm run build` antes de importar el plugin.
 
 ## Sintaxis mermaid soportada (v1)
 

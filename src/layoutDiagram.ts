@@ -3,6 +3,9 @@
 // en loop infinito y el nodo "vuelve" a una fila superior solo con su conector.
 
 import type { Grafo, Nodo, Forma } from './parseMermaid.ts';
+import type { TablaCard } from './parseMarkdown.ts';
+import { t } from './i18n.ts';
+import type { Idioma } from './i18n.ts';
 
 // Clases mermaid que sacan un nodo del camino feliz cuando el toggle
 // "separar edge cases" está activo. Extensible: ['error', 'optional', 'offramp'].
@@ -377,4 +380,34 @@ export function agruparEnCarriles(desc: DescomposicionCards, duplicar: boolean):
   }
   if (carriles.has(null)) resultado.push({ clave: null, ramas: carriles.get(null)! });
   return resultado;
+}
+
+// ---------------------------------------------------------------------------
+// Modo Table: una fila por caso, sin conectores. Reusa el renderer de tablas.
+// ---------------------------------------------------------------------------
+
+// Trigger | Qué hace el sistema | Resultado | Reingresa a. En ramas con
+// decisión, "Resultado" lista TODOS los desenlaces posteriores a la última
+// decisión (con su label: "Sí: …" / "No: …"); en ramas lineales es el último
+// paso. Los headers van en el idioma del panel (contenido del plugin).
+export function descomposicionATabla(desc: DescomposicionCards, lang: Idioma): TablaCard {
+  const filas = desc.ramas.map((rama) => {
+    const pasos = rama.filas.filter((f) => f.tipo !== 'reingreso');
+    const reingresos = rama.filas.filter((f) => f.tipo === 'reingreso');
+    const ultimaDecision = pasos.map((f) => f.tipo).lastIndexOf('decision');
+    const corte = ultimaDecision >= 0 ? ultimaDecision + 1 : Math.max(pasos.length - 1, 0);
+    const conLabel = (f: FilaRama) => (f.label ? f.label + ': ' : '') + f.texto;
+    const proceso = pasos.slice(0, corte).map(conLabel).join(' → ');
+    const resultado = pasos.slice(corte).map(conLabel).join(' / ');
+    return [rama.titulo, proceso || '—', resultado || '—', reingresos.map(conLabel).join(' / ') || '—'];
+  });
+  return {
+    headers: [
+      t('canvas.thTrigger', lang),
+      t('canvas.thSistema', lang),
+      t('canvas.thResultado', lang),
+      t('canvas.thReingresa', lang),
+    ],
+    filas,
+  };
 }

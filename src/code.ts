@@ -9,7 +9,7 @@
 // "🧩 Base components" vive como Section anidada dentro de Documentation.
 
 import { parsearFlowchart, Grafo } from './parseMermaid.ts';
-import { calcularLayout, posicionarOffPath, esOffPath, esFlujoDenso, descomponerEnRamas, agruparEnCarriles, Direccion } from './layoutDiagram.ts';
+import { calcularLayout, posicionarOffPath, esOffPath, esFlujoDenso, descomponerEnRamas, agruparEnCarriles, descomposicionATabla, Direccion } from './layoutDiagram.ts';
 import { analizarDocumento, esResumenFlow, TipoSeccion, SeccionDetectada } from './parseMarkdown.ts';
 import { t } from './i18n.ts';
 import type { Idioma } from './i18n.ts';
@@ -28,6 +28,8 @@ import {
   crearContextoRuteo,
   crearCardsFlujo,
   crearSwimlanesFlujo,
+  crearTablaFlujo,
+  crearSubflujosClassic,
   crearSection,
   cargarFuenteMono,
 } from './renderFigma.ts';
@@ -79,7 +81,7 @@ Promise.all([
     lang: idioma === 'es' ? 'es' : 'en',                            // default: inglés
     direccion: direccion === 'horizontal' ? 'horizontal' : 'vertical', // default: vertical
     repetirFlow: repetir === true,                                  // default: desactivado
-    layoutStyle: layout === 'cards' || layout === 'swimlanes' ? layout : 'classic', // default: classic
+    layoutStyle: layout === 'cards' || layout === 'swimlanes' || layout === 'table' ? layout : 'classic', // default: classic
     soloDensos: soloDensos === undefined ? true : soloDensos === true, // default: activado
     laneReingreso: laneRe === 'badge' ? 'badge' : 'junction',           // default: junction local
     laneAgrupacion: laneAgr === 'duplicar' ? 'duplicar' : 'primero',    // default: primer reingreso
@@ -92,7 +94,7 @@ interface Opciones {
   separarEdgeCases: boolean;
   direccion: Direccion;
   repetirFlow: boolean;
-  layoutStyle: 'classic' | 'cards' | 'swimlanes';
+  layoutStyle: 'classic' | 'cards' | 'swimlanes' | 'table';
   soloDensos: boolean;
   laneReingreso: 'junction' | 'badge';
   laneAgrupacion: 'primero' | 'duplicar';
@@ -192,26 +194,36 @@ async function generar(markdown: string, o: Opciones): Promise<{ resumen: string
     const { grafo, offPath, posiciones, posicionesOffPath } = d;
     const sufijo = diagramas.length > 1 ? ' — ' + d.flujoLabel : '';
 
-    // Modos simplificados (Cards/Swimlanes): aplican al flujo si están
-    // elegidos globalmente y (con el toggle "solo densos") el flujo supera
-    // el umbral de densidad.
-    const modoSimplificado = o.layoutStyle !== 'classic' && (!o.soloDensos || esFlujoDenso(grafo));
-    if (modoSimplificado) {
+    // Modos que descomponen el flujo por ramas del hub. Los simplificados
+    // (Cards/Swimlanes/Table) respetan el toggle "solo densos"; Classic
+    // descompone SIEMPRE solo los densos (los simples quedan como diagrama
+    // único, que es lo correcto para ellos).
+    const descomponer = o.layoutStyle === 'classic'
+      ? esFlujoDenso(grafo)
+      : (!o.soloDensos || esFlujoDenso(grafo));
+    if (descomponer) {
       const descomposicion = descomponerEnRamas(grafo);
       if (descomposicion) {
-        let hijos: SceneNode[];
-        if (o.layoutStyle === 'swimlanes') {
+        const construirEstilos = () => {
           const estilos = new Map<string, EstiloNodo>();
-          const avisosEstiloLane = new Set<string>();
+          const avisosEstilo = new Set<string>();
           for (const nodo of grafo.nodos.values()) {
             const { estilo, aviso } = resolverEstilo(nodo, grafo.classDefs, o.lang);
             estilos.set(nodo.id, estilo);
-            if (aviso) avisosEstiloLane.add(aviso);
+            if (aviso) avisosEstilo.add(aviso);
           }
-          for (const aviso of avisosEstiloLane) avisos.push(aviso);
+          for (const aviso of avisosEstilo) avisos.push(aviso);
+          return estilos;
+        };
+        let hijos: SceneNode[];
+        if (o.layoutStyle === 'swimlanes') {
           const carriles = agruparEnCarriles(descomposicion, o.laneAgrupacion === 'duplicar');
           const opcionesLane: OpcionesSwimlanes = { reingreso: o.laneReingreso, orientacion: o.laneOrientacion };
-          hijos = await crearSwimlanesFlujo(grafo, descomposicion, carriles, estilos, opcionesLane, o.lang, comps);
+          hijos = await crearSwimlanesFlujo(grafo, descomposicion, carriles, construirEstilos(), opcionesLane, o.lang, comps);
+        } else if (o.layoutStyle === 'table') {
+          hijos = crearTablaFlujo(descomposicionATabla(descomposicion, o.lang), descomposicion.preambulo, o.lang, comps);
+        } else if (o.layoutStyle === 'classic') {
+          hijos = await crearSubflujosClassic(grafo, descomposicion, d.flujoLabel, construirEstilos(), o.lang, comps);
         } else {
           hijos = crearCardsFlujo(descomposicion);
         }
@@ -226,11 +238,12 @@ async function generar(markdown: string, o: Opciones): Promise<{ resumen: string
         }
         seccionesFlujo.push(crearSection(t('canvas.seccionDiagrama', o.lang) + sufijo, hijos));
         totalNodos += grafo.nodos.size;
-        // en los modos simplificados los edge cases ya están integrados
+        // en los layouts descompuestos los edge cases ya están integrados
         if (o.separarEdgeCases && offPath.size > 0) avisoCardsEdge = true;
         continue;
       }
-      // sin hub razonable → cae a Classic
+      // sin hub razonable → cae al diagrama único con warning
+      avisos.push(t('aviso.descomposicionFallback', o.lang, { flujo: d.flujoLabel }));
     }
     const nodosCreados = new Map<string, SceneNode>();
     const nodosPrincipal: SceneNode[] = [];
@@ -430,11 +443,9 @@ figma.ui.onmessage = async (msg: {
   }
   if (msg.type !== 'generar') return;
 
-  // Table todavía no existe: cae a Classic con aviso en consola
-  let layoutStyle: 'classic' | 'cards' | 'swimlanes' = 'classic';
-  if (msg.layoutStyle === 'cards' || msg.layoutStyle === 'swimlanes') layoutStyle = msg.layoutStyle;
-  else if (msg.layoutStyle === 'table') {
-    console.log(`[markdown-to-flow] ${t('aviso.modoNoDisponible', lang, { modo: msg.layoutStyle })}`);
+  let layoutStyle: 'classic' | 'cards' | 'swimlanes' | 'table' = 'classic';
+  if (msg.layoutStyle === 'cards' || msg.layoutStyle === 'swimlanes' || msg.layoutStyle === 'table') {
+    layoutStyle = msg.layoutStyle;
   }
 
   const opciones: Opciones = {
