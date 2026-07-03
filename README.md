@@ -116,6 +116,26 @@ siga un formato exacto — el plugin genera lo mejor posible con lo que haya.
   como fila cruda con aviso. El texto alrededor de una tabla se renderiza
   normal. Todos los `<br>`/`<br/>`/`<br />` del origen se vuelven saltos de
   línea reales (`normalizeLineBreaks`, aplicado en nodos, labels, cards y celdas).
+- **Estilos de layout** (`Layout style`, persistido): **Classic** (default, el
+  flowchart de siempre) y **Cards** — para flujos densos cuya complejidad es
+  topológica ("muchos triggers → decisión compartida → muchos resultados"):
+  detecta el hub (mayor fan-out), muestra el preámbulo raíz→hub una vez y
+  convierte cada rama en una **tarjeta autocontenida** (trigger como título,
+  pasos con mini-íconos, decisiones con opciones etiquetadas y el reingreso
+  como fila verde con el junction — cero conectores cruzando el diagrama;
+  los nodos compartidos entre ramas se duplican por tarjeta). El toggle
+  **"solo flujos densos"** (default activado) aplica el modo elegido
+  únicamente a los flujos con fan-out máximo > 4 (`UMBRAL_FLUJO_DENSO` —
+  FLW01/02 quedan Classic, FLW03/04/05 en Cards); desactivado, aplica a
+  todos. En flujos renderizados como Cards el toggle de "separar edge cases"
+  se ignora con aviso (ya son tarjetas). **Swimlanes**: carriles por punto de
+  reingreso (fondos planos, sin reparenting de conectores) con el mini-flujo
+  Classic real de cada rama adentro (subgrafo + layout compacto), y tres
+  sub-settings persistidos en el panel — *Re-entry style* (junction local o
+  badge de texto), *Lane grouping* (primer reingreso o duplicar la rama en
+  cada carril) y *Lane orientation* (horizontal/vertical). Table sigue como
+  "(soon)". Los **conectores de salto largo** (desviados por carril) van en
+  `#0D99FF` para distinguirlos de los pasos secuenciales.
 - **Dirección de flujo configurable** (Vertical/Horizontal, default Vertical,
   persistida): tiene prioridad sobre la dirección del mermaid (que se parsea
   pero solo se loguea). En horizontal los niveles del BFS van a columnas y la
@@ -137,8 +157,13 @@ siga un formato exacto — el plugin genera lo mejor posible con lo que haya.
     Section por flujo** (diagrama + edge cases + conectores punteados que los
     cruzan — dos Sections separadas clipeaban esos conectores), con un título
     suelto `"Edge cases and errors — {flowLabel}"` sobre el bloque off-path.
-    Todos los conectores van en **#874FFF** (override intencional, ambos
-    editores); el punteado es la única señal de edge case. Organización del
+    Los conectores normales van en **#9747FF** (override intencional, ambos
+    editores); el punteado es la única señal de edge case. La paleta de las
+    variantes: Start/End `#CFF7D3/#008043`, Process `#FFF1C2/#FAB815`,
+    Decision `#E5F4FF/#0768CF`, Options/Input `#F1E5FF/#7C2BDA`, Annotation
+    fill `#FFF1C2`; texto `#000000` al 90% de opacidad en todas (en el paint).
+    Los nodos con clase de error usan la paleta roja fija `#FFE2E0/#BD2915`,
+    que pisa la variante y el classDef del archivo. Organización del
     canvas en **dos pasadas**: cada Section se genera con contenido en
     coordenadas locales, y con los tamaños reales medidos se apilan los flujos
     en columna (200px entre bordes) con **Documentation a la izquierda**, que

@@ -13,19 +13,22 @@
 // documentación (createSectionCard) usan frames comunes en los dos editores.
 
 import { hexARgb } from './parseMermaid.ts';
-import type { Nodo, Forma, EstiloClase } from './parseMermaid.ts';
+import type { Nodo, Forma, EstiloClase, Grafo } from './parseMermaid.ts';
 import { construirNegritas, construirRico } from './parseMarkdown.ts';
 import type { LineaCard, BloqueCard, TablaCard } from './parseMarkdown.ts';
 import { t } from './i18n.ts';
 import type { Idioma } from './i18n.ts';
 import {
   ESTILO_CONECTOR,
+  COLOR_SALTO_LARGO,
   RADIO_CODO,
   DESVIO_RETORNO,
   MARGEN_OBSTACULO,
   MARGEN_CARRIL,
   SEPARACION_CARRIL,
 } from './connectorStyle.ts';
+import { esOffPath, calcularLayout } from './layoutDiagram.ts';
+import type { DescomposicionCards, RamaCard, Carril } from './layoutDiagram.ts';
 
 export const FUENTE: FontName = { family: 'Inter', style: 'Medium' };          // nodos y conectores
 export const FUENTE_REGULAR: FontName = { family: 'Inter', style: 'Regular' }; // body de las cards
@@ -60,18 +63,39 @@ export interface EstiloNodo {
   dashed: boolean;
 }
 
-// Colores default por forma, para nodos sin clase (o con clase sin classDef).
+const NEGRO: Color = { r: 0, g: 0, b: 0 };
+
+// Colores default por forma (paleta de las variantes). El texto es negro al
+// 90% de opacidad en todas — la opacidad se aplica en el paint, no en el hex.
 const ESTILOS_DEFAULT: Record<Forma, EstiloNodo> = {
-  inicioFin: { fill: { r: 0.86, g: 0.99, b: 0.91 }, stroke: { r: 0.09, g: 0.64, b: 0.29 }, texto: { r: 0.09, g: 0.37, b: 0.2 }, dashed: false },
-  proceso: { fill: { r: 1, g: 0.98, b: 0.76 }, stroke: { r: 0.79, g: 0.5, b: 0.02 }, texto: { r: 0.44, g: 0.25, b: 0.07 }, dashed: false },
-  decision: { fill: { r: 0.84, g: 0.94, b: 1 }, stroke: { r: 0.01, g: 0.53, b: 0.82 }, texto: { r: 0, g: 0.34, b: 0.61 }, dashed: false },
-  inputOutput: { fill: { r: 0.9, g: 0.88, b: 0.98 }, stroke: { r: 0.37, g: 0.21, b: 0.69 }, texto: { r: 0.19, g: 0.11, b: 0.57 }, dashed: false },
-  conector: { fill: { r: 0.95, g: 0.95, b: 0.96 }, stroke: { r: 0.45, g: 0.45, b: 0.5 }, texto: { r: 0.25, g: 0.25, b: 0.3 }, dashed: false },
+  inicioFin: { fill: { r: 207 / 255, g: 247 / 255, b: 211 / 255 }, stroke: { r: 0, g: 128 / 255, b: 67 / 255 }, texto: NEGRO, dashed: false },        // #CFF7D3 / #008043
+  proceso: { fill: { r: 1, g: 241 / 255, b: 194 / 255 }, stroke: { r: 250 / 255, g: 184 / 255, b: 21 / 255 }, texto: NEGRO, dashed: false },          // #FFF1C2 / #FAB815
+  decision: { fill: { r: 229 / 255, g: 244 / 255, b: 1 }, stroke: { r: 7 / 255, g: 104 / 255, b: 207 / 255 }, texto: NEGRO, dashed: false },          // #E5F4FF / #0768CF
+  inputOutput: { fill: { r: 241 / 255, g: 229 / 255, b: 1 }, stroke: { r: 124 / 255, g: 43 / 255, b: 218 / 255 }, texto: NEGRO, dashed: false },      // #F1E5FF / #7C2BDA
+  conector: { fill: { r: 0.95, g: 0.95, b: 0.96 }, stroke: { r: 0.45, g: 0.45, b: 0.5 }, texto: NEGRO, dashed: false },
 };
+
+// Nodos Process con clase de error: paleta propia que pisa la variante base
+// y el classDef del archivo.
+const PALETA_ERROR: EstiloNodo = {
+  fill: { r: 1, g: 226 / 255, b: 224 / 255 },      // #FFE2E0
+  stroke: { r: 189 / 255, g: 41 / 255, b: 21 / 255 }, // #BD2915
+  texto: NEGRO,
+  dashed: false,
+};
+
+// Pintura estándar del texto de nodos: #000000 al 90% de opacidad.
+function pinturaTextoNodo(color: Color): SolidPaint[] {
+  return [{ type: 'SOLID', color, opacity: 0.9 }];
+}
 
 // Resuelve el estilo de un nodo: primera clase con classDef definido gana;
 // clase sin definir → default por forma + aviso; sin clase → default por forma.
 export function resolverEstilo(nodo: Nodo, classDefs: Map<string, EstiloClase>, lang: Idioma = 'en'): { estilo: EstiloNodo; aviso: string | null } {
+  // la clase de error pisa la variante base Y el classDef del archivo
+  if (esOffPath(nodo)) {
+    return { estilo: { fill: PALETA_ERROR.fill, stroke: PALETA_ERROR.stroke, texto: PALETA_ERROR.texto, dashed: false }, aviso: null };
+  }
   const base = ESTILOS_DEFAULT[nodo.forma];
   for (const clase of nodo.clases) {
     const def = classDefs.get(clase);
@@ -221,7 +245,7 @@ export function createShapeComponents(x: number, y: number): ComponentesBase {
     texto.textAlignVertical = 'CENTER';
     texto.textAutoResize = 'NONE';
     texto.characters = 'Text';
-    texto.fills = [{ type: 'SOLID', color: base.texto }];
+    texto.fills = pinturaTextoNodo(base.texto);
     comp.appendChild(texto);
     const area = areaTexto(forma, w, h);
     texto.x = area.x;
@@ -266,7 +290,7 @@ export function createShapeComponents(x: number, y: number): ComponentesBase {
   annotation.resize(200, annotation.height);
   annotation.paddingLeft = annotation.paddingRight = annotation.paddingTop = annotation.paddingBottom = 16;
   annotation.cornerRadius = 4;
-  annotation.fills = [{ type: 'SOLID', color: { r: 1, g: 0.976, b: 0.694 } }]; // amarillo sticky
+  annotation.fills = [{ type: 'SOLID', color: { r: 1, g: 241 / 255, b: 194 / 255 } }]; // #FFF1C2
   annotation.effects = [{
     type: 'DROP_SHADOW',
     color: { r: 0, g: 0, b: 0, a: 0.15 },
@@ -281,7 +305,7 @@ export function createShapeComponents(x: number, y: number): ComponentesBase {
   textoAnnotation.fontSize = 12;
   textoAnnotation.lineHeight = { value: 150, unit: 'PERCENT' };
   textoAnnotation.characters = 'Annotation';
-  textoAnnotation.fills = [{ type: 'SOLID', color: { r: 0.25, g: 0.22, b: 0.05 } }];
+  textoAnnotation.fills = pinturaTextoNodo(NEGRO);
   annotation.appendChild(textoAnnotation);
   textoAnnotation.layoutAlign = 'STRETCH'; // fill en el ancho → wrap
   textoAnnotation.textAutoResize = 'HEIGHT';
@@ -325,7 +349,7 @@ export function createDiagramNodeInstance(
     if (estilo.dashed) shape.dashPattern = [4, 2];
     shape.text.characters = texto;
     shape.text.fontSize = fontSize;
-    shape.text.fills = [{ type: 'SOLID', color: estilo.texto }];
+    shape.text.fills = pinturaTextoNodo(estilo.texto);
     shape.x = cx - shape.width / 2;
     shape.y = cy - shape.height / 2;
     return shape;
@@ -348,7 +372,7 @@ export function createDiagramNodeInstance(
   if (textoNodo) {
     textoNodo.characters = texto;
     textoNodo.fontSize = fontSize;
-    textoNodo.fills = [{ type: 'SOLID', color: estilo.texto }];
+    textoNodo.fills = pinturaTextoNodo(estilo.texto);
   }
   instancia.x = cx - w / 2;
   instancia.y = cy - h / 2;
@@ -712,6 +736,8 @@ export async function createConnectorLike(origen: SceneNode, destino: SceneNode,
   // ruta final (con desvío por carril si la default cruza otros nodos);
   // también posiciona el badge del label en ambos editores
   const ruta = rutaEvitandoObstaculos(origen, destino, ruteo);
+  // salto largo (desviado por carril) → verde, para distinguirlo de los pasos secuenciales
+  const colorLinea = ruta.lado !== null ? COLOR_SALTO_LARGO : ESTILO_CONECTOR.color;
 
   if (figma.editorType === 'figjam') {
     const conector = figma.createConnector();
@@ -736,8 +762,8 @@ export async function createConnectorLike(origen: SceneNode, destino: SceneNode,
         dashPattern: c.dashPattern,
       }));
     }
-    // color único para todos los conectores (override intencional del default)
-    conector.strokes = [{ type: 'SOLID', color: ESTILO_CONECTOR.color }];
+    // override intencional del default; verde si es salto largo
+    conector.strokes = [{ type: 'SOLID', color: colorLinea }];
     if (offPath) {
       conector.dashPattern = [6, 6]; // el punteado es la única señal de edge case
     }
@@ -760,7 +786,7 @@ export async function createConnectorLike(origen: SceneNode, destino: SceneNode,
 
   const linea = figma.createVector();
   linea.name = label ? t('canvas.capaFlecha', lang, { label }) : t('canvas.capaFlechaSimple', lang);
-  linea.strokes = [{ type: 'SOLID', color: ESTILO_CONECTOR.color }];
+  linea.strokes = [{ type: 'SOLID', color: colorLinea }];
   linea.strokeWeight = ESTILO_CONECTOR.strokeWeight;
   if (offPath) linea.dashPattern = [6, 6];
   linea.x = 0;
@@ -777,7 +803,7 @@ export async function createConnectorLike(origen: SceneNode, destino: SceneNode,
   const punto = figma.createEllipse();
   punto.name = 'inicio';
   punto.resize(8, 8);
-  punto.fills = [{ type: 'SOLID', color: ESTILO_CONECTOR.color }];
+  punto.fills = [{ type: 'SOLID', color: colorLinea }];
   punto.x = inicio.x - 4;
   punto.y = inicio.y - 4;
 
@@ -920,6 +946,336 @@ export function createSectionCard(titulo: string, bloques: BloqueCard[], x: numb
   return card;
 }
 
+// ---------------------------------------------------------------------------
+// Modo Cards: cada rama del hub como tarjeta autocontenida en una grilla,
+// sin conectores entre tarjetas. El reingreso se representa como fila final
+// con el mini-junction y texto verde (decisión de representación para este
+// modo: ningún conector de reingreso cruza el diagrama).
+// ---------------------------------------------------------------------------
+
+const CARDS_ANCHO = 300;
+const CARDS_POR_FILA = 3;
+const CARDS_GAP = 24;
+
+// mini-ícono de forma (18px aprox) para las filas de las tarjetas — frames
+// simples, funcionan igual en los dos editores (sin depender de instances)
+function crearMiniForma(forma: Forma): SceneNode {
+  const estilo = ESTILOS_DEFAULT[forma];
+  if (forma === 'inicioFin' || forma === 'conector') {
+    const circulo = figma.createEllipse();
+    circulo.resize(16, 16);
+    circulo.fills = [{ type: 'SOLID', color: estilo.fill }];
+    circulo.strokes = [{ type: 'SOLID', color: estilo.stroke }];
+    circulo.strokeWeight = 1.5;
+    return circulo;
+  }
+  if (forma === 'decision') {
+    const rombo = figma.createRectangle();
+    rombo.resize(12, 12);
+    rombo.rotation = 45;
+    rombo.fills = [{ type: 'SOLID', color: estilo.fill }];
+    rombo.strokes = [{ type: 'SOLID', color: estilo.stroke }];
+    rombo.strokeWeight = 1.5;
+    return rombo;
+  }
+  const rect = figma.createRectangle();
+  rect.resize(18, 13);
+  rect.cornerRadius = 2;
+  rect.fills = [{ type: 'SOLID', color: estilo.fill }];
+  rect.strokes = [{ type: 'SOLID', color: estilo.stroke }];
+  rect.strokeWeight = 1.5;
+  return rect;
+}
+
+function crearCardRama(rama: RamaCard): FrameNode {
+  const card = figma.createFrame();
+  card.name = rama.titulo;
+  card.layoutMode = 'VERTICAL';
+  card.counterAxisSizingMode = 'FIXED';
+  card.primaryAxisSizingMode = 'AUTO';
+  card.resize(CARDS_ANCHO, card.height);
+  card.fills = [{ type: 'SOLID', color: { r: 0.99, g: 0.99, b: 0.99 } }];
+  card.strokes = [{ type: 'SOLID', color: { r: 0.85, g: 0.85, b: 0.87 } }];
+  card.strokeWeight = 1;
+  card.cornerRadius = 8;
+
+  // header: el trigger/condición del caso
+  const header = figma.createFrame();
+  header.layoutMode = 'VERTICAL';
+  header.counterAxisSizingMode = 'FIXED';
+  header.primaryAxisSizingMode = 'AUTO';
+  header.paddingTop = header.paddingBottom = 10;
+  header.paddingLeft = header.paddingRight = 14;
+  header.fills = [{ type: 'SOLID', color: { r: 0.996, g: 0.976, b: 0.765 } }];
+  const titulo = figma.createText();
+  titulo.fontName = FUENTE_BOLD;
+  titulo.fontSize = 12;
+  titulo.characters = rama.titulo;
+  titulo.fills = [{ type: 'SOLID', color: { r: 0.44, g: 0.25, b: 0.07 } }];
+  header.appendChild(titulo);
+  titulo.layoutAlign = 'STRETCH';
+  titulo.textAutoResize = 'HEIGHT';
+  card.appendChild(header);
+  header.layoutAlign = 'STRETCH';
+
+  // cuerpo: una fila por paso/decisión/reingreso
+  const cuerpo = figma.createFrame();
+  cuerpo.layoutMode = 'VERTICAL';
+  cuerpo.counterAxisSizingMode = 'FIXED';
+  cuerpo.primaryAxisSizingMode = 'AUTO';
+  cuerpo.paddingTop = cuerpo.paddingBottom = 12;
+  cuerpo.paddingLeft = cuerpo.paddingRight = 14;
+  cuerpo.itemSpacing = 8;
+  cuerpo.fills = [];
+  for (const f of rama.filas) {
+    const fila = figma.createFrame();
+    fila.layoutMode = 'HORIZONTAL';
+    fila.counterAxisSizingMode = 'AUTO';
+    fila.primaryAxisSizingMode = 'FIXED';
+    fila.resize(CARDS_ANCHO - 28, fila.height);
+    fila.counterAxisAlignItems = 'CENTER';
+    fila.itemSpacing = 8;
+    fila.fills = [];
+    fila.appendChild(crearMiniForma(f.forma));
+
+    const texto = figma.createText();
+    const prefijo = f.label ? `${f.label} → ` : '';
+    if (f.tipo === 'reingreso') {
+      texto.fontName = FUENTE_BOLD;
+      texto.characters = `${prefijo}→ ${f.texto}`;
+      texto.fills = [{ type: 'SOLID', color: COLOR_SALTO_LARGO }];
+    } else {
+      texto.fontName = FUENTE_REGULAR;
+      texto.characters = prefijo + f.texto;
+      texto.fills = [{ type: 'SOLID', color: { r: 0.2, g: 0.2, b: 0.22 } }];
+      if (prefijo) texto.setRangeFontName(0, f.label!.length, FUENTE_BOLD);
+    }
+    texto.fontSize = 11;
+    fila.appendChild(texto);
+    texto.layoutGrow = 1;
+    texto.textAutoResize = 'HEIGHT';
+    cuerpo.appendChild(fila);
+    fila.layoutAlign = 'STRETCH';
+  }
+  card.appendChild(cuerpo);
+  cuerpo.layoutAlign = 'STRETCH';
+  return card;
+}
+
+// Genera el flujo completo en modo Cards: encabezado con el preámbulo
+// (raíz → hub) y la grilla de tarjetas, todo en coordenadas locales.
+export function crearCardsFlujo(desc: DescomposicionCards): SceneNode[] {
+  const nodos: SceneNode[] = [];
+
+  const encabezado = figma.createText();
+  encabezado.fontName = FUENTE;
+  encabezado.fontSize = 14;
+  encabezado.characters = desc.preambulo.map((n) => n.texto.replace(/\n/g, ' ')).join('  →  ');
+  encabezado.fills = [{ type: 'SOLID', color: { r: 0.2, g: 0.2, b: 0.22 } }];
+  encabezado.x = 0;
+  encabezado.y = 0;
+  nodos.push(encabezado);
+
+  const cards = desc.ramas.map((rama) => crearCardRama(rama));
+  let y = encabezado.height + 32;
+  for (let i = 0; i < cards.length; i += CARDS_POR_FILA) {
+    const fila = cards.slice(i, i + CARDS_POR_FILA);
+    fila.forEach((card, j) => {
+      card.x = j * (CARDS_ANCHO + CARDS_GAP);
+      card.y = y;
+    });
+    let maxAlto = 0;
+    for (const card of fila) maxAlto = Math.max(maxAlto, card.height);
+    y += maxAlto + CARDS_GAP;
+  }
+  for (const card of cards) nodos.push(card);
+  return nodos;
+}
+
+// ---------------------------------------------------------------------------
+// Modo Swimlanes: carriles por punto de reingreso, con el mini-flujo Classic
+// de cada rama adentro. Los carriles son fondos planos (rect + header como
+// hermanos de los nodos, no frames contenedores): así los conectores nativos
+// no sufren reparenting. Configurable desde el panel: representación del
+// reingreso (junction local o badge de texto) y orientación de los carriles.
+// ---------------------------------------------------------------------------
+
+export interface OpcionesSwimlanes {
+  reingreso: 'junction' | 'badge';
+  orientacion: 'horizontal' | 'vertical';
+}
+
+const LANE_ESCALA_X = 0.8;          // compacta el espaciado del mini-flujo
+const LANE_ESPACIADO_Y = 170;
+const LANE_PADDING = 24;
+const LANE_GAP = 32;
+const LANE_GAP_RAMAS = 48;
+
+// Mini-flujo Classic de una rama: subgrafo real (nodos + edges propios) con
+// el layout existente en espaciado compacto. Devuelve los nodos creados y su
+// bounding box local.
+async function crearMiniFlujo(
+  grafo: Grafo,
+  ids: string[],
+  offsetX: number,
+  offsetY: number,
+  estilos: Map<string, EstiloNodo>,
+  lang: Idioma,
+  comps: ComponentesBase | null,
+  incluirJunctions: boolean,
+): Promise<{ nodos: SceneNode[]; ancho: number; alto: number }> {
+  const idsUsados = new Set(incluirJunctions ? ids : ids.filter((id) => grafo.nodos.get(id)!.forma !== 'conector'));
+  const subGrafo: Grafo = {
+    direccion: 'TD',
+    nodos: new Map(Array.from(grafo.nodos).filter(([id]) => idsUsados.has(id))),
+    edges: grafo.edges.filter((e) => idsUsados.has(e.origen) && idsUsados.has(e.destino)),
+    classDefs: grafo.classDefs,
+    warnings: [],
+  };
+  const posiciones = calcularLayout(subGrafo);
+
+  // primero las instances (con centros escalados), después se normaliza el
+  // bloque al offset pedido ANTES de trazar los conectores
+  const creados = new Map<string, SceneNode>();
+  const nodos: SceneNode[] = [];
+  for (const [id, p] of posiciones) {
+    const nodo = subGrafo.nodos.get(id)!;
+    const estilo = estilos.get(id) || ESTILOS_DEFAULT[nodo.forma];
+    const instancia = createDiagramNodeInstance(
+      nodo.forma, nodo.texto, estilo,
+      p.x * LANE_ESCALA_X,
+      p.y * (LANE_ESPACIADO_Y / 300),
+      comps,
+    );
+    creados.set(id, instancia);
+    nodos.push(instancia);
+  }
+  let minX = Infinity, minY = Infinity;
+  for (const n of nodos) {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
+  }
+  for (const n of nodos) {
+    n.x += offsetX - minX;
+    n.y += offsetY - minY;
+  }
+  for (const e of subGrafo.edges) {
+    const a = creados.get(e.origen);
+    const b = creados.get(e.destino);
+    if (!a || !b) continue;
+    const conector = await createConnectorLike(a, b, e.label, false, lang, undefined, comps);
+    for (const c of conector) nodos.push(c);
+  }
+
+  let maxX = 0, maxY = 0;
+  for (const n of nodos) {
+    if (n.type === 'CONNECTOR') continue;
+    maxX = Math.max(maxX, n.x + n.width - offsetX);
+    maxY = Math.max(maxY, n.y + n.height - offsetY);
+  }
+  return { nodos, ancho: maxX, alto: maxY };
+}
+
+// Genera el flujo completo en modo Swimlanes, en coordenadas locales.
+export async function crearSwimlanesFlujo(
+  grafo: Grafo,
+  desc: DescomposicionCards,
+  carriles: Carril[],
+  estilos: Map<string, EstiloNodo>,
+  opciones: OpcionesSwimlanes,
+  lang: Idioma,
+  comps: ComponentesBase | null,
+): Promise<SceneNode[]> {
+  const nodos: SceneNode[] = [];
+
+  const encabezado = figma.createText();
+  encabezado.fontName = FUENTE;
+  encabezado.fontSize = 14;
+  encabezado.characters = desc.preambulo.map((n) => n.texto.replace(/\n/g, ' ')).join('  →  ');
+  encabezado.fills = pinturaTextoNodo(NEGRO);
+  encabezado.x = 0;
+  encabezado.y = 0;
+  nodos.push(encabezado);
+
+  const horizontal = opciones.orientacion === 'horizontal';
+  let cursor = encabezado.height + 32; // Y en horizontal, X en vertical
+
+  for (const carril of carriles) {
+    const laneX = horizontal ? 0 : cursor;
+    const laneY = horizontal ? cursor : encabezado.height + 32;
+
+    const header = figma.createText();
+    header.fontName = FUENTE_BOLD;
+    header.fontSize = 14;
+    header.characters = carril.clave !== null ? `→ ${carril.clave}` : t('canvas.laneSinReingreso', lang);
+    header.fills = [{ type: 'SOLID', color: COLOR_SALTO_LARGO }];
+    header.x = laneX + LANE_PADDING;
+    header.y = laneY + 14;
+
+    const hijosCarril: SceneNode[] = [header];
+    let x = laneX + LANE_PADDING;
+    const contenidoY = laneY + 14 + header.height + 16;
+    let maxAlto = 0;
+
+    for (const rama of carril.ramas) {
+      const tituloRama = figma.createText();
+      tituloRama.fontName = FUENTE_BOLD;
+      tituloRama.fontSize = 11;
+      tituloRama.characters = rama.titulo;
+      tituloRama.fills = pinturaTextoNodo(NEGRO);
+      tituloRama.x = x;
+      tituloRama.y = contenidoY;
+      hijosCarril.push(tituloRama);
+
+      const mini = await crearMiniFlujo(
+        grafo, rama.ids, x, contenidoY + tituloRama.height + 12,
+        estilos, lang, comps, opciones.reingreso === 'junction',
+      );
+      for (const n of mini.nodos) hijosCarril.push(n);
+      let altoRama = tituloRama.height + 12 + mini.alto;
+
+      // reingreso como badge de texto (cuando los junctions quedan fuera)
+      if (opciones.reingreso === 'badge') {
+        const reingresos = rama.filas.filter((f) => f.tipo === 'reingreso');
+        if (reingresos.length > 0) {
+          const badge = figma.createText();
+          badge.fontName = FUENTE_BOLD;
+          badge.fontSize = 11;
+          badge.characters = reingresos.map((f) => `${f.label ? f.label + ': ' : ''}→ ${f.texto}`).join('\n');
+          badge.fills = [{ type: 'SOLID', color: COLOR_SALTO_LARGO }];
+          badge.x = x;
+          badge.y = contenidoY + tituloRama.height + 12 + mini.alto + 10;
+          hijosCarril.push(badge);
+          altoRama += 10 + badge.height;
+        }
+      }
+
+      x += Math.max(mini.ancho, tituloRama.width) + LANE_GAP_RAMAS;
+      maxAlto = Math.max(maxAlto, altoRama);
+    }
+
+    // fondo del carril, medido sobre el contenido real; va PRIMERO en la
+    // lista para quedar detrás de los nodos
+    const fondo = figma.createRectangle();
+    fondo.name = header.characters;
+    fondo.cornerRadius = 8;
+    fondo.fills = [{ type: 'SOLID', color: { r: 0.984, g: 0.984, b: 0.99 } }];
+    fondo.strokes = [{ type: 'SOLID', color: { r: 0.85, g: 0.85, b: 0.87 } }];
+    fondo.strokeWeight = 1;
+    const anchoLane = x - laneX - LANE_GAP_RAMAS + LANE_PADDING;
+    const altoLane = contenidoY - laneY + maxAlto + LANE_PADDING;
+    fondo.resize(Math.max(anchoLane, header.width + LANE_PADDING * 2), altoLane);
+    fondo.x = laneX;
+    fondo.y = laneY;
+
+    nodos.push(fondo);
+    for (const h of hijosCarril) nodos.push(h);
+
+    cursor += (horizontal ? altoLane : fondo.width) + LANE_GAP;
+  }
+  return nodos;
+}
+
 // Título del flujo (flowLabel) como texto suelto dentro del Section del
 // diagrama — misma tipografía que el header de las cards de documentación.
 export function crearTituloFlujo(label: string, x: number, y: number): TextNode {
@@ -954,7 +1310,7 @@ function crearAnotacionFrame(texto: string, x: number, y: number): FrameNode {
   nota.layoutMode = 'HORIZONTAL';
   nota.primaryAxisSizingMode = 'AUTO';
   nota.counterAxisSizingMode = 'AUTO';
-  nota.fills = [{ type: 'SOLID', color: { r: 1, g: 0.976, b: 0.694 } }]; // amarillo sticky
+  nota.fills = [{ type: 'SOLID', color: { r: 1, g: 241 / 255, b: 194 / 255 } }]; // #FFF1C2
   nota.paddingLeft = nota.paddingRight = 8;
   nota.paddingTop = nota.paddingBottom = 6;
   nota.effects = [{
@@ -970,7 +1326,7 @@ function crearAnotacionFrame(texto: string, x: number, y: number): FrameNode {
   contenido.fontName = FUENTE_REGULAR;
   contenido.fontSize = 11;
   contenido.characters = texto;
-  contenido.fills = [{ type: 'SOLID', color: { r: 0.25, g: 0.22, b: 0.05 } }];
+  contenido.fills = pinturaTextoNodo(NEGRO);
   nota.appendChild(contenido);
 
   nota.x = x;
@@ -1135,8 +1491,17 @@ function crearTabla(tabla: TablaCard, anchoDisponible: number, lang: Idioma, com
   }
 
   // simulada: frame vertical de filas; celdas de ancho fijo para que las
-  // columnas queden alineadas (cada fila es un autolayout independiente)
-  const anchoCelda = Math.floor(anchoDisponible / tabla.headers.length);
+  // columnas queden alineadas. En la leyenda, la columna "Forma" es más ancha
+  // para que el ícono (texto + 24px) nunca quede recortado.
+  const anchoColumnaForma = 200;
+  const anchoCeldaDe = (col: number): number => {
+    if (esLeyenda && tabla.headers.length > 1) {
+      return col === 1
+        ? anchoColumnaForma
+        : Math.floor((anchoDisponible - anchoColumnaForma) / (tabla.headers.length - 1));
+    }
+    return Math.floor(anchoDisponible / tabla.headers.length);
+  };
   const contenedor = figma.createFrame();
   contenedor.name = 'tabla';
   contenedor.layoutMode = 'VERTICAL';
@@ -1164,7 +1529,7 @@ function crearTabla(tabla: TablaCard, anchoDisponible: number, lang: Idioma, com
       celda.layoutMode = 'VERTICAL';
       celda.primaryAxisSizingMode = 'AUTO';
       celda.counterAxisSizingMode = 'FIXED';
-      celda.resize(anchoCelda, celda.height);
+      celda.resize(anchoCeldaDe(col), celda.height);
       celda.paddingTop = celda.paddingBottom = 6;
       celda.paddingLeft = celda.paddingRight = 8;
       celda.fills = [];

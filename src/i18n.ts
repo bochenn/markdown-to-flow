@@ -25,6 +25,9 @@ const DICCIONARIO: Record<string, { en: string; es: string }> = {
   'aviso.sinFlowParaRepetir': { en: 'The Flow summary card was not repeated (no Flow section was detected in the file).', es: 'No se repitió la card de resumen del Flow (no se detectó sección Flow en el archivo).' },
   'aviso.tablaIrregular': { en: 'Table row with {found} column(s) adjusted to the {expected} header column(s).', es: 'Fila de tabla con {found} columna(s) ajustada a las {expected} del header.' },
   'aviso.filaCACruda': { en: 'Bullet without the CA pattern, added as a raw row: "{linea}"', es: 'Bullet sin el patrón CA, agregado como fila cruda: "{linea}"' },
+  'aviso.modoNoDisponible': { en: "The '{modo}' layout is not available yet; Classic was used.", es: "El layout '{modo}' todavía no está disponible; se usó Classic." },
+  'aviso.edgeCasesEnCards': { en: "In simplified layouts (Cards/Swimlanes), edge cases are already integrated; the 'separate edge cases' toggle was ignored for those flows.", es: 'En los layouts simplificados (Cards/Swimlanes) los edge cases ya están integrados; el toggle de separarlos se ignoró en esos flujos.' },
+  'canvas.laneSinReingreso': { en: 'No re-entry — flow ends here', es: 'Sin reingreso — termina el flujo' },
 
   // etiquetas del canvas
   'canvas.seccionDiagrama': { en: 'Flow diagram', es: 'Diagrama de flujo' },

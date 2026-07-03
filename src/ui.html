@@ -46,6 +46,45 @@
   </label>
 
   <div class="idioma">
+    <label for="layoutStyle" id="labelLayout">Layout style</label>
+    <select id="layoutStyle">
+      <option value="classic" selected>Classic</option>
+      <option value="cards">Cards</option>
+      <option value="swimlanes">Swimlanes</option>
+      <option value="table" disabled>Table (soon)</option>
+    </select>
+  </div>
+
+  <div id="opcionesSwimlanes" style="display: none;">
+    <div class="idioma">
+      <label for="laneReingreso" id="labelLaneReingreso">Re-entry style</label>
+      <select id="laneReingreso">
+        <option value="junction" selected>Junction node</option>
+        <option value="badge">Text badge</option>
+      </select>
+    </div>
+    <div class="idioma">
+      <label for="laneAgrupacion" id="labelLaneAgrupacion">Lane grouping</label>
+      <select id="laneAgrupacion">
+        <option value="primero" selected>First re-entry</option>
+        <option value="duplicar">Duplicate per re-entry</option>
+      </select>
+    </div>
+    <div class="idioma">
+      <label for="laneOrientacion" id="labelLaneOrientacion">Lane orientation</label>
+      <select id="laneOrientacion">
+        <option value="horizontal" selected>Horizontal</option>
+        <option value="vertical">Vertical</option>
+      </select>
+    </div>
+  </div>
+
+  <label class="toggle">
+    <input type="checkbox" id="soloDensos" checked>
+    <span id="textoSoloDensos">Apply simplified layout only to dense flows</span>
+  </label>
+
+  <div class="idioma">
     <label for="direccion" id="labelDireccion">Flow direction</label>
     <select id="direccion">
       <option value="vertical" selected>Vertical</option>
@@ -76,6 +115,11 @@
       textoDocs: 'Also generate documentation cards (steps, decisions, assumptions, etc.)',
       textoEdgeCases: 'Separate edge cases and errors into their own flow',
       textoRepetirFlow: 'Repeat flow summary card at the start of each flow',
+      labelLayout: 'Layout style',
+      textoSoloDensos: 'Apply simplified layout only to dense flows',
+      labelLaneReingreso: 'Re-entry style',
+      labelLaneAgrupacion: 'Lane grouping',
+      labelLaneOrientacion: 'Lane orientation',
       labelDireccion: 'Flow direction',
       labelIdioma: 'Output language',
       generar: 'Generate',
@@ -94,6 +138,11 @@
       textoDocs: 'Generar también cards de documentación (steps, decisiones, assumptions, etc.)',
       textoEdgeCases: 'Separar edge cases y errores en un flujo aparte',
       textoRepetirFlow: 'Repetir la card de resumen del Flow al inicio de cada flujo',
+      labelLayout: 'Estilo de layout',
+      textoSoloDensos: 'Aplicar el layout simplificado solo a flujos densos',
+      labelLaneReingreso: 'Estilo de reingreso',
+      labelLaneAgrupacion: 'Agrupación de carriles',
+      labelLaneOrientacion: 'Orientación de carriles',
       labelDireccion: 'Dirección del flujo',
       labelIdioma: 'Idioma de salida',
       generar: 'Generar',
@@ -111,6 +160,18 @@
   const docs = document.getElementById('docs');
   const edgeCases = document.getElementById('edgeCases');
   const repetirFlow = document.getElementById('repetirFlow');
+  const selectorLayout = document.getElementById('layoutStyle');
+  const soloDensos = document.getElementById('soloDensos');
+  const opcionesSwimlanes = document.getElementById('opcionesSwimlanes');
+  const laneReingreso = document.getElementById('laneReingreso');
+  const laneAgrupacion = document.getElementById('laneAgrupacion');
+  const laneOrientacion = document.getElementById('laneOrientacion');
+
+  // los sub-settings de Swimlanes solo se muestran cuando aplica
+  function actualizarOpcionesLane() {
+    opcionesSwimlanes.style.display = selectorLayout.value === 'swimlanes' ? 'block' : 'none';
+  }
+  selectorLayout.addEventListener('change', actualizarOpcionesLane);
   const selectorDireccion = document.getElementById('direccion');
   const selectorIdioma = document.getElementById('idioma');
   const status = document.getElementById('status');
@@ -123,7 +184,7 @@
   function aplicarIdioma(lang) {
     idiomaActual = lang;
     const tx = textos();
-    for (const id of ['tituloPanel', 'labelArchivo', 'ayudaArchivo', 'labelPegar', 'textoDocs', 'textoEdgeCases', 'textoRepetirFlow', 'labelDireccion', 'labelIdioma']) {
+    for (const id of ['tituloPanel', 'labelArchivo', 'ayudaArchivo', 'labelPegar', 'textoDocs', 'textoEdgeCases', 'textoRepetirFlow', 'labelLayout', 'textoSoloDensos', 'labelLaneReingreso', 'labelLaneAgrupacion', 'labelLaneOrientacion', 'labelDireccion', 'labelIdioma']) {
       document.getElementById(id).textContent = tx[id];
     }
     document.getElementById('generar').textContent = tx.generar;
@@ -173,6 +234,11 @@
       generarDocs: docs.checked,
       separarEdgeCases: edgeCases.checked,
       repetirFlow: repetirFlow.checked,
+      layoutStyle: selectorLayout.value,
+      soloDensos: soloDensos.checked,
+      laneReingreso: laneReingreso.value,
+      laneAgrupacion: laneAgrupacion.value,
+      laneOrientacion: laneOrientacion.value,
       direccion: selectorDireccion.value,
       lang: idiomaActual,
       nombreArchivo: nombreArchivo,
@@ -186,6 +252,12 @@
       docs.checked = msg.generarDocs;             // settings persistidos entre sesiones
       edgeCases.checked = msg.separarEdgeCases;
       repetirFlow.checked = msg.repetirFlow;
+      selectorLayout.value = msg.layoutStyle;
+      soloDensos.checked = msg.soloDensos;
+      laneReingreso.value = msg.laneReingreso;
+      laneAgrupacion.value = msg.laneAgrupacion;
+      laneOrientacion.value = msg.laneOrientacion;
+      actualizarOpcionesLane();
       selectorDireccion.value = msg.direccion;
       selectorIdioma.value = msg.lang;
       if (msg.lang !== idiomaActual) aplicarIdioma(msg.lang);

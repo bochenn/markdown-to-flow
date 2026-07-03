@@ -2,7 +2,7 @@
 // ya visitados (ciclos, como L --> I) se ignoran, así el cálculo nunca entra
 // en loop infinito y el nodo "vuelve" a una fila superior solo con su conector.
 
-import type { Grafo, Nodo } from './parseMermaid.ts';
+import type { Grafo, Nodo, Forma } from './parseMermaid.ts';
 
 // Clases mermaid que sacan un nodo del camino feliz cuando el toggle
 // "separar edge cases" está activo. Extensible: ['error', 'optional', 'offramp'].
@@ -232,4 +232,149 @@ export function posicionarOffPath(
     anterior = valor;
   }
   return posiciones;
+}
+
+// ---------------------------------------------------------------------------
+// Modo Cards para flujos densos: la complejidad de FLW03/04/05 está en la
+// topología ("muchos triggers → decisión compartida → muchos resultados"),
+// no en el ruteo. Cada rama del hub se vuelve una tarjeta autocontenida.
+// ---------------------------------------------------------------------------
+
+// Umbral de densidad: fan-out máximo por nivel. Es el único criterio que
+// clasifica bien el archivo de referencia (contar conectores marcaría denso
+// al flujo principal, que tiene los 4 reingresos inline; contar saltos
+// largos marcaría al flujo alterno). FLW01=1, FLW02=3 vs FLW03/04/05=6.
+export const UMBRAL_FLUJO_DENSO = 4;
+
+export function esFlujoDenso(grafo: Grafo): boolean {
+  const posiciones = calcularLayout(grafo);
+  const porNivel = new Map<number, number>();
+  for (const p of posiciones.values()) porNivel.set(p.nivel, (porNivel.get(p.nivel) || 0) + 1);
+  let maxAncho = 0;
+  for (const n of porNivel.values()) maxAncho = Math.max(maxAncho, n);
+  return maxAncho > UMBRAL_FLUJO_DENSO;
+}
+
+export interface FilaRama {
+  texto: string;
+  tipo: 'paso' | 'decision' | 'reingreso';
+  forma: Forma;
+  label?: string; // label del edge que llega a esta fila (ej. "Sí"/"No")
+}
+
+export interface RamaCard {
+  titulo: string;      // label del edge que sale del hub (la condición del caso)
+  filas: FilaRama[];
+  ids: string[];       // ids de los nodos en orden DFS (incluye junctions) — para mini-flujos
+}
+
+export interface DescomposicionCards {
+  preambulo: Nodo[];   // cadena raíz → hub (incluye el hub), se muestra una vez
+  ramas: RamaCard[];
+}
+
+// Hub = nodo con mayor fan-out; una tarjeta por edge saliente del hub (DFS
+// sin volver al hub). Los nodos compartidos entre ramas se duplican en cada
+// tarjeta: eso es lo que elimina los conectores cruzando todo el diagrama.
+// Los reingresos (forma conector) cierran la tarjeta como fila especial.
+export function descomponerEnRamas(grafo: Grafo): DescomposicionCards | null {
+  if (grafo.edges.length === 0) return null;
+
+  const salientes = new Map<string, { destino: string; label?: string }[]>();
+  for (const e of grafo.edges) {
+    const lista = salientes.get(e.origen);
+    const item = { destino: e.destino, label: e.label };
+    if (lista) lista.push(item);
+    else salientes.set(e.origen, [item]);
+  }
+
+  let hub: string | null = null;
+  for (const [id, lista] of salientes) {
+    if (!hub || lista.length > salientes.get(hub)!.length) hub = id;
+  }
+  if (!hub || (salientes.get(hub) || []).length < 2) return null;
+
+  const conEntrantes = new Set(grafo.edges.map((e) => e.destino));
+  let raiz: string | null = null;
+  for (const id of grafo.nodos.keys()) {
+    if (!conEntrantes.has(id)) { raiz = id; break; }
+  }
+
+  const preambulo: Nodo[] = [];
+  const vistos = new Set<string>();
+  let cursor: string | null = raiz;
+  while (cursor && cursor !== hub && !vistos.has(cursor)) {
+    vistos.add(cursor);
+    preambulo.push(grafo.nodos.get(cursor)!);
+    const siguiente = (salientes.get(cursor) || [])[0];
+    cursor = siguiente ? siguiente.destino : null;
+  }
+  preambulo.push(grafo.nodos.get(hub)!);
+
+  const ramas: RamaCard[] = (salientes.get(hub) || []).map((inicial) => {
+    const filas: FilaRama[] = [];
+    const ids: string[] = [];
+    const visitados = new Set<string>([hub!]);
+    const caminar = (id: string, labelEntrada?: string) => {
+      if (visitados.has(id)) return;
+      visitados.add(id);
+      const nodo = grafo.nodos.get(id);
+      if (!nodo) return;
+      ids.push(id);
+      if (nodo.forma === 'conector') {
+        filas.push({ texto: nodo.texto, tipo: 'reingreso', forma: nodo.forma, label: labelEntrada });
+        return;
+      }
+      filas.push({
+        texto: nodo.texto,
+        tipo: nodo.forma === 'decision' ? 'decision' : 'paso',
+        forma: nodo.forma,
+        label: labelEntrada,
+      });
+      for (const e of salientes.get(id) || []) caminar(e.destino, e.label);
+    };
+    caminar(inicial.destino);
+    const primerNodo = grafo.nodos.get(inicial.destino);
+    return { titulo: inicial.label || (primerNodo ? primerNodo.texto : ''), filas, ids };
+  });
+
+  return { preambulo, ramas };
+}
+
+// ---------------------------------------------------------------------------
+// Modo Swimlanes: carriles agrupados por punto de reingreso.
+// ---------------------------------------------------------------------------
+
+export interface Carril {
+  clave: string | null; // texto del nodo de reingreso; null = "sin reingreso / termina"
+  ramas: RamaCard[];
+}
+
+// Agrupa las ramas por reingreso. duplicar=false → cada rama va al carril de
+// su PRIMER reingreso; duplicar=true → una rama con varios reingresos aparece
+// en el carril de cada uno. Las ramas sin reingreso van al carril null.
+export function agruparEnCarriles(desc: DescomposicionCards, duplicar: boolean): Carril[] {
+  const carriles = new Map<string | null, RamaCard[]>();
+  const agregar = (clave: string | null, rama: RamaCard) => {
+    const lista = carriles.get(clave);
+    if (lista) lista.push(rama);
+    else carriles.set(clave, [rama]);
+  };
+  for (const rama of desc.ramas) {
+    const reingresos = rama.filas.filter((f) => f.tipo === 'reingreso');
+    if (reingresos.length === 0) {
+      agregar(null, rama);
+    } else if (duplicar) {
+      const claves = new Set(reingresos.map((f) => f.texto));
+      for (const clave of claves) agregar(clave, rama);
+    } else {
+      agregar(reingresos[0].texto, rama);
+    }
+  }
+  const resultado: Carril[] = [];
+  for (const [clave, ramas] of carriles) {
+    if (clave !== null) resultado.push({ clave, ramas });
+  }
+  if (carriles.has(null)) resultado.push({ clave: null, ramas: carriles.get(null)! });
+  return resultado;
 }

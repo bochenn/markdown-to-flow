@@ -11,11 +11,11 @@
 // Design es recta a propósito. Se igualan color, grosor y punta (V abierta
 // de líneas, strokeCap ARROW_LINES — la misma familia que usa FigJam).
 
-// Color único para TODOS los conectores (#874FFF), en ambos editores —
+// Color único para los conectores normales (#9747FF), en ambos editores —
 // override intencional sobre el default. Los edge cases se distinguen solo
 // por el punteado (dashPattern), no por color.
 export const ESTILO_CONECTOR = {
-  color: { r: 135 / 255, g: 79 / 255, b: 1 }, // #874FFF
+  color: { r: 151 / 255, g: 71 / 255, b: 1 }, // #9747FF
   strokeWeight: 2,
 };
 
@@ -25,6 +25,11 @@ export const ESTILO_CONECTOR = {
 // estos valores aplican al trazado simulado de Figma Design.
 export const RADIO_CODO = 8;      // radio de esquina de los codos simulados
 export const DESVIO_RETORNO = 60; // cuánto rodea por la derecha un back-edge
+
+// Conectores de salto largo (los desviados por carril): color propio para
+// distinguir de un vistazo los "saltos" entre partes distantes del flujo
+// de los pasos secuenciales normales (#874FFF).
+export const COLOR_SALTO_LARGO = { r: 13 / 255, g: 153 / 255, b: 1 }; // #0D99FF
 
 // Desvío por carril lateral cuando un conector cruzaría otros nodos.
 export const MARGEN_OBSTACULO = 24;  // separación de las bandas respecto de los nodos

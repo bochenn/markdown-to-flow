@@ -9,7 +9,7 @@
 // "🧩 Base components" vive como Section anidada dentro de Documentation.
 
 import { parsearFlowchart, Grafo } from './parseMermaid.ts';
-import { calcularLayout, posicionarOffPath, esOffPath, Direccion } from './layoutDiagram.ts';
+import { calcularLayout, posicionarOffPath, esOffPath, esFlujoDenso, descomponerEnRamas, agruparEnCarriles, Direccion } from './layoutDiagram.ts';
 import { analizarDocumento, esResumenFlow, TipoSeccion, SeccionDetectada } from './parseMarkdown.ts';
 import { t } from './i18n.ts';
 import type { Idioma } from './i18n.ts';
@@ -26,15 +26,23 @@ import {
   crearTituloFlujo,
   crearAnotacionConector,
   crearContextoRuteo,
+  crearCardsFlujo,
+  crearSwimlanesFlujo,
   crearSection,
   cargarFuenteMono,
 } from './renderFigma.ts';
+import type { EstiloNodo, OpcionesSwimlanes } from './renderFigma.ts';
 
 const CLAVE_DOCS = 'generarDocs';
 const CLAVE_EDGE_CASES = 'separarEdgeCases';
 const CLAVE_IDIOMA = 'idioma';
 const CLAVE_DIRECCION = 'direccionFlujo';
 const CLAVE_REPETIR_FLOW = 'repetirFlow';
+const CLAVE_LAYOUT = 'layoutStyle';
+const CLAVE_SOLO_DENSOS = 'layoutSoloDensos';
+const CLAVE_LANE_REINGRESO = 'laneReingreso';
+const CLAVE_LANE_AGRUPACION = 'laneAgrupacion';
+const CLAVE_LANE_ORIENTACION = 'laneOrientacion';
 const SEPARACION_CARDS = 40;
 const MARGEN_CARD_FLOW = 40;   // entre título/card repetida y el primer nodo
 const ESCALA_CARD_FLOW = 0.7;  // la copia repetida es más chica que la original
@@ -58,7 +66,12 @@ Promise.all([
   figma.clientStorage.getAsync(CLAVE_IDIOMA),
   figma.clientStorage.getAsync(CLAVE_DIRECCION),
   figma.clientStorage.getAsync(CLAVE_REPETIR_FLOW),
-]).then(([docs, edgeCases, idioma, direccion, repetir]) => {
+  figma.clientStorage.getAsync(CLAVE_LAYOUT),
+  figma.clientStorage.getAsync(CLAVE_SOLO_DENSOS),
+  figma.clientStorage.getAsync(CLAVE_LANE_REINGRESO),
+  figma.clientStorage.getAsync(CLAVE_LANE_AGRUPACION),
+  figma.clientStorage.getAsync(CLAVE_LANE_ORIENTACION),
+]).then(([docs, edgeCases, idioma, direccion, repetir, layout, soloDensos, laneRe, laneAgr, laneOri]) => {
   figma.ui.postMessage({
     type: 'estado-inicial',
     generarDocs: docs === undefined ? true : docs === true,        // default: activado
@@ -66,6 +79,11 @@ Promise.all([
     lang: idioma === 'es' ? 'es' : 'en',                            // default: inglés
     direccion: direccion === 'horizontal' ? 'horizontal' : 'vertical', // default: vertical
     repetirFlow: repetir === true,                                  // default: desactivado
+    layoutStyle: layout === 'cards' || layout === 'swimlanes' ? layout : 'classic', // default: classic
+    soloDensos: soloDensos === undefined ? true : soloDensos === true, // default: activado
+    laneReingreso: laneRe === 'badge' ? 'badge' : 'junction',           // default: junction local
+    laneAgrupacion: laneAgr === 'duplicar' ? 'duplicar' : 'primero',    // default: primer reingreso
+    laneOrientacion: laneOri === 'vertical' ? 'vertical' : 'horizontal', // default: horizontal
   });
 });
 
@@ -74,6 +92,11 @@ interface Opciones {
   separarEdgeCases: boolean;
   direccion: Direccion;
   repetirFlow: boolean;
+  layoutStyle: 'classic' | 'cards' | 'swimlanes';
+  soloDensos: boolean;
+  laneReingreso: 'junction' | 'badge';
+  laneAgrupacion: 'primero' | 'duplicar';
+  laneOrientacion: 'horizontal' | 'vertical';
   lang: Idioma;
   nombreArchivo?: string;
 }
@@ -163,9 +186,52 @@ async function generar(markdown: string, o: Opciones): Promise<{ resumen: string
   const seccionesFlujo: SectionNode[] = [];
   let totalNodos = 0;
   let totalEdgeCases = 0;
+  let avisoCardsEdge = false;
 
   for (const d of diagramas) {
     const { grafo, offPath, posiciones, posicionesOffPath } = d;
+    const sufijo = diagramas.length > 1 ? ' — ' + d.flujoLabel : '';
+
+    // Modos simplificados (Cards/Swimlanes): aplican al flujo si están
+    // elegidos globalmente y (con el toggle "solo densos") el flujo supera
+    // el umbral de densidad.
+    const modoSimplificado = o.layoutStyle !== 'classic' && (!o.soloDensos || esFlujoDenso(grafo));
+    if (modoSimplificado) {
+      const descomposicion = descomponerEnRamas(grafo);
+      if (descomposicion) {
+        let hijos: SceneNode[];
+        if (o.layoutStyle === 'swimlanes') {
+          const estilos = new Map<string, EstiloNodo>();
+          const avisosEstiloLane = new Set<string>();
+          for (const nodo of grafo.nodos.values()) {
+            const { estilo, aviso } = resolverEstilo(nodo, grafo.classDefs, o.lang);
+            estilos.set(nodo.id, estilo);
+            if (aviso) avisosEstiloLane.add(aviso);
+          }
+          for (const aviso of avisosEstiloLane) avisos.push(aviso);
+          const carriles = agruparEnCarriles(descomposicion, o.laneAgrupacion === 'duplicar');
+          const opcionesLane: OpcionesSwimlanes = { reingreso: o.laneReingreso, orientacion: o.laneOrientacion };
+          hijos = await crearSwimlanesFlujo(grafo, descomposicion, carriles, estilos, opcionesLane, o.lang, comps);
+        } else {
+          hijos = crearCardsFlujo(descomposicion);
+        }
+        // título del flujo (y card repetida) arriba del encabezado, como en Classic
+        let ancla: SceneNode = hijos[0];
+        const tituloFlujo = crearTituloFlujo(d.flujoLabel, ancla.x, 0);
+        tituloFlujo.y = ancla.y - tituloFlujo.height - MARGEN_CARD_FLOW;
+        hijos.push(tituloFlujo);
+        ancla = tituloFlujo;
+        if (o.repetirFlow && o.generarDocs && seccionFlow) {
+          hijos.push(crearCardFlowRepetida(ancla));
+        }
+        seccionesFlujo.push(crearSection(t('canvas.seccionDiagrama', o.lang) + sufijo, hijos));
+        totalNodos += grafo.nodos.size;
+        // en los modos simplificados los edge cases ya están integrados
+        if (o.separarEdgeCases && offPath.size > 0) avisoCardsEdge = true;
+        continue;
+      }
+      // sin hub razonable → cae a Classic
+    }
     const nodosCreados = new Map<string, SceneNode>();
     const nodosPrincipal: SceneNode[] = [];
     const nodosEdgeCases: SceneNode[] = [];
@@ -243,7 +309,6 @@ async function generar(markdown: string, o: Opciones): Promise<{ resumen: string
     totalEdgeCases += offPath.size;
 
     // UNA sola Section por flujo: diagrama + edge cases juntos
-    const sufijo = diagramas.length > 1 ? ' — ' + d.flujoLabel : '';
     seccionesFlujo.push(crearSection(
       t('canvas.seccionDiagrama', o.lang) + sufijo,
       nodosPrincipal.concat(nodosEdgeCases),
@@ -265,6 +330,9 @@ async function generar(markdown: string, o: Opciones): Promise<{ resumen: string
   }
   if (o.repetirFlow && o.generarDocs && !seccionFlow) {
     avisos.push(t('aviso.sinFlowParaRepetir', o.lang));
+  }
+  if (avisoCardsEdge) {
+    avisos.push(t('aviso.edgeCasesEnCards', o.lang));
   }
 
   // --- PASADA 1 (documentación): cards en coordenadas locales + 🧩 anidado ---
@@ -345,6 +413,11 @@ figma.ui.onmessage = async (msg: {
   separarEdgeCases?: boolean;
   direccion?: string;
   repetirFlow?: boolean;
+  layoutStyle?: string;
+  soloDensos?: boolean;
+  laneReingreso?: string;
+  laneAgrupacion?: string;
+  laneOrientacion?: string;
   lang?: string;
   nombreArchivo?: string;
 }) => {
@@ -357,11 +430,23 @@ figma.ui.onmessage = async (msg: {
   }
   if (msg.type !== 'generar') return;
 
+  // Table todavía no existe: cae a Classic con aviso en consola
+  let layoutStyle: 'classic' | 'cards' | 'swimlanes' = 'classic';
+  if (msg.layoutStyle === 'cards' || msg.layoutStyle === 'swimlanes') layoutStyle = msg.layoutStyle;
+  else if (msg.layoutStyle === 'table') {
+    console.log(`[markdown-to-flow] ${t('aviso.modoNoDisponible', lang, { modo: msg.layoutStyle })}`);
+  }
+
   const opciones: Opciones = {
     generarDocs: msg.generarDocs === true,
     separarEdgeCases: msg.separarEdgeCases === true,
     direccion: msg.direccion === 'horizontal' ? 'horizontal' : 'vertical',
     repetirFlow: msg.repetirFlow === true,
+    layoutStyle,
+    soloDensos: msg.soloDensos !== false,
+    laneReingreso: msg.laneReingreso === 'badge' ? 'badge' : 'junction',
+    laneAgrupacion: msg.laneAgrupacion === 'duplicar' ? 'duplicar' : 'primero',
+    laneOrientacion: msg.laneOrientacion === 'vertical' ? 'vertical' : 'horizontal',
     lang,
     nombreArchivo: msg.nombreArchivo,
   };
@@ -369,6 +454,11 @@ figma.ui.onmessage = async (msg: {
   figma.clientStorage.setAsync(CLAVE_EDGE_CASES, opciones.separarEdgeCases);
   figma.clientStorage.setAsync(CLAVE_DIRECCION, opciones.direccion);
   figma.clientStorage.setAsync(CLAVE_REPETIR_FLOW, opciones.repetirFlow);
+  figma.clientStorage.setAsync(CLAVE_LAYOUT, msg.layoutStyle || 'classic');
+  figma.clientStorage.setAsync(CLAVE_SOLO_DENSOS, opciones.soloDensos);
+  figma.clientStorage.setAsync(CLAVE_LANE_REINGRESO, opciones.laneReingreso);
+  figma.clientStorage.setAsync(CLAVE_LANE_AGRUPACION, opciones.laneAgrupacion);
+  figma.clientStorage.setAsync(CLAVE_LANE_ORIENTACION, opciones.laneOrientacion);
   figma.clientStorage.setAsync(CLAVE_IDIOMA, lang);
   try {
     const { resumen, warnings } = await generar(msg.markdown || '', opciones);

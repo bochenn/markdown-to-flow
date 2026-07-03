@@ -3,7 +3,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parsearFlowchart, hexARgb } from '../src/parseMermaid.ts';
-import { calcularLayout, posicionarOffPath, esOffPath, SEPARACION_MIN_COLUMNA, SEPARACION_MIN_FILA } from '../src/layoutDiagram.ts';
+import {
+  calcularLayout,
+  posicionarOffPath,
+  esOffPath,
+  esFlujoDenso,
+  descomponerEnRamas,
+  agruparEnCarriles,
+  SEPARACION_MIN_COLUMNA,
+  SEPARACION_MIN_FILA,
+} from '../src/layoutDiagram.ts';
 import {
   resolverEstilo,
   rutaElbow,
@@ -172,6 +181,13 @@ test('resolverEstilo aplica el classDef y avisa si la clase no existe', () => {
   const claseInexistente = parsearFlowchart('flowchart TD\nA[uno]:::fantasma\n');
   const resultado = resolverEstilo(claseInexistente.nodos.get('A')!, claseInexistente.classDefs);
   assert.ok(resultado.aviso !== null && resultado.aviso.includes('fantasma'));
+
+  // la clase de error pisa la variante base Y el classDef del archivo
+  const conError = parsearFlowchart('flowchart TD\nclassDef error fill:#123456\nA[falla]:::error\n');
+  const error = resolverEstilo(conError.nodos.get('A')!, conError.classDefs);
+  assert.deepEqual(error.estilo.fill, hexARgb('#FFE2E0'));
+  assert.deepEqual(error.estilo.stroke, hexARgb('#BD2915'));
+  assert.deepEqual(error.estilo.texto, { r: 0, g: 0, b: 0 }); // negro; el 90% va en el paint
 });
 
 test('rutaElbow: recta si están alineados, Z si hay desplazamiento, rodeo en retornos', () => {
@@ -259,6 +275,59 @@ test('rutaEvitandoObstaculos: sin cruce queda la default; con cruce desvía por 
   // y un conector solo en su franja queda exactamente como la ruta elbow default
   const unico = crearContextoRuteo([origen, destino]);
   assert.deepEqual(rutaEvitandoObstaculos(origen, destino, unico).puntos, rutaElbow(origen, destino));
+});
+
+test('esFlujoDenso: FLW01/02 simples, FLW03/04/05 densos (fan-out > 4)', () => {
+  const diagramas = analizarDocumento(edgeMd).diagramas;
+  const esperado = [false, false, true, true, true];
+  diagramas.forEach((d, i) => {
+    assert.equal(esFlujoDenso(parsearFlowchart(d.codigo)), esperado[i], d.flujo.id);
+  });
+});
+
+test('descomponerEnRamas: FLW03 en 6 tarjetas con reingresos y preámbulo', () => {
+  const diagramas = analizarDocumento(edgeMd).diagramas;
+  const desc = descomponerEnRamas(parsearFlowchart(diagramas[2].codigo))!;
+  assert.ok(desc !== null);
+  assert.equal(desc.preambulo.length, 2); // Disparador → "Tipo de edge case" (hub)
+  assert.equal(desc.preambulo[1].forma, 'decision');
+  assert.equal(desc.ramas.length, 6);
+
+  const porTitulo = new Map(desc.ramas.map((r) => [r.titulo, r]));
+  const talla = porTitulo.get('Talla se agota mientras está en carrito')!;
+  assert.deepEqual(talla.filas.map((f) => f.tipo), ['paso', 'paso', 'reingreso']);
+  assert.ok(talla.filas[2].texto.includes('CO'));
+
+  const precio = porTitulo.get('Cambió el precio antes de pagar')!;
+  assert.ok(precio.filas.some((f) => f.tipo === 'decision'));
+  assert.ok(precio.filas.some((f) => f.tipo === 'reingreso' && f.label === 'Sí'));
+
+  // grafo sin hub (lineal) → null, cae a Classic
+  assert.equal(descomponerEnRamas(parsearFlowchart('flowchart TD\nA[a] --> B[b]\nB --> C[c]\n')), null);
+
+  // ids en orden DFS para los mini-flujos de Swimlanes
+  assert.deepEqual(talla.ids, ['B', 'B1', 'CO']);
+});
+
+test('agruparEnCarriles: FLW03 por primer reingreso, y duplicar reparte las ramas multi-reingreso', () => {
+  const diagramas = analizarDocumento(edgeMd).diagramas;
+  const desc = descomponerEnRamas(parsearFlowchart(diagramas[2].codigo))!;
+  const carriles = agruparEnCarriles(desc, false);
+  const resumen = new Map(carriles.map((c) => [c.clave, c.ramas.length]));
+  assert.equal(resumen.get('Reingresa a CO'), 2);   // talla agotada + email con cuenta
+  assert.equal(resumen.get('Reingresa a REV'), 1);  // cambio de precio
+  assert.equal(resumen.get(null), 3);               // los que terminan sin reingresar
+  assert.equal(carriles[carriles.length - 1].clave, null); // "sin reingreso" siempre al final
+
+  // rama sintética con dos reingresos → con duplicar aparece en ambos carriles
+  const grafo = parsearFlowchart(
+    'flowchart TD\nS([s]) --> H{hub}\nH -->|a| P1[p1]\nH -->|b| P2[p2]\nP1 --> D{ok?}\nD -->|Sí| R1(((CO)))\nD -->|No| R2(((REV)))\nP2 --> R3(((CO)))\n',
+  );
+  const desc2 = descomponerEnRamas(grafo)!;
+  const unico = agruparEnCarriles(desc2, false);
+  assert.equal(unico.filter((c) => c.ramas.some((r) => r.titulo === 'a')).length, 1);
+  const duplicado = agruparEnCarriles(desc2, true);
+  assert.equal(duplicado.filter((c) => c.ramas.some((r) => r.titulo === 'a')).length, 2);
 });
 
 test('barycenter: FLW03 (flujo denso) queda sin cruces de conectores', () => {
