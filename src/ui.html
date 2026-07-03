@@ -28,6 +28,7 @@
     <input type="file" id="archivo" accept=".md,.markdown,.txt">
   </fig-field>
   <p class="ayuda" id="ayudaArchivo">An exact structure isn't required: the plugin will generate the best it can from whatever it finds.</p>
+  <fig-button id="descargarEjemplo">Download example markdown</fig-button>
 
   <fig-field>
     <label id="labelPegar">…or paste the content here</label>
@@ -103,6 +104,7 @@
       labelArchivo: 'User flow file (.md, .markdown or .txt)',
       ayudaArchivo: "An exact structure isn't required: the plugin will generate the best it can from whatever it finds.",
       labelPegar: '…or paste the content here',
+      descargarEjemplo: 'Download example markdown',
       textoDocs: 'Also generate documentation cards (steps, decisions, assumptions, etc.)',
       textoEdgeCases: 'Separate edge cases and errors into their own flow',
       textoRepetirFlow: 'Repeat flow summary card at the start of each flow',
@@ -126,6 +128,7 @@
       labelArchivo: 'Archivo de user flow (.md, .markdown o .txt)',
       ayudaArchivo: 'No hace falta una estructura exacta: el plugin genera lo mejor posible con lo que encuentre.',
       labelPegar: '…o pegá el contenido acá',
+      descargarEjemplo: 'Descargar markdown de ejemplo',
       textoDocs: 'Generar también cards de documentación (steps, decisiones, assumptions, etc.)',
       textoEdgeCases: 'Separar edge cases y errores en un flujo aparte',
       textoRepetirFlow: 'Repetir la card de resumen del Flow al inicio de cada flujo',
@@ -145,6 +148,124 @@
       avisos: 'Avisos:',
     },
   };
+
+  // Markdown de ejemplo embebido (un solo flujo, no denso): se descarga como
+  // Blob UTF-8 desde el iframe — sin fetch, compatible con networkAccess none.
+  const EXAMPLE_MARKDOWN = `# User Flow — Buying jeans without being signed in
+
+> 📄 Example file for the **Markdown to Flow** plugin — edit it or replace it with your own user flow.
+> Interaction design deliverable generated from the User Story "Buying jeans as an unauthenticated user". Produced with the user-flow method (steps, system responses and decision branches).
+
+---
+
+## Flow: Complete the purchase of a pair of jeans without being authenticated
+
+- **Type:** user flow
+- **Actor:** Unauthenticated user (fashion ecommerce visitor)
+- **Goal:** Get the confirmation of a paid jeans order without being forced to register before paying
+- **Trigger (entry):** The user lands on the website and browses to the jeans category
+- **Preconditions:** None required. The user has no active session. The chosen product and size must be in stock.
+- **Success (exit):** The confirmation page shows the order number and the confirmation email is sent
+
+---
+
+### Steps (happy path)
+
+1. **[User]** Browses the jeans section and filters by size/color/fit/price → **[System]** Shows the product listing → (Screen: Jeans listing)
+2. **[User]** Opens a product detail page → **[System]** Shows images, price, sizes and delivery options → (Screen: Product detail)
+3. **[User]** Picks a size and clicks "Add to cart" → **[System]** Validates stock and confirms → (Screen: Detail + added confirmation)
+4. **[User]** Goes to the cart and clicks "Checkout" → **[System]** Detects there is no session and keeps the cart → (Screen: Cart)
+5. **[System]** Shows the authentication options: Sign in / Create account / Continue as guest → (Screen: Checkout modal)
+6. **[User]** Chooses "Continue as guest" and enters contact, address and shipping → **[System]** Validates and keeps the cart intact → (Screen: Guest checkout)
+7. **[User]** Enters payment, reviews the summary, accepts the terms and clicks "Buy now" → **[System]** Validates the payment → (Screen: Summary and payment)
+8. **[System]** Generates the order number, shows the confirmation and sends the email → (Screen: Order confirmation)
+
+---
+
+### Decision points
+
+- **D1 · Is the user signed in when clicking "Checkout"?**
+  - Yes → jumps straight to step 7
+  - No → step 5 (authentication / guest options)
+
+- **D2 · Which checkout option does the user pick?** (CA1)
+  - "Continue as guest" → step 6 (CA2)
+  - "Sign in" → login sub-flow; on success, checkout continues with the cart intact (CA4)
+  - "Create account" → registration sub-flow; after registering, checkout continues (CA5)
+
+- **D3 · Is the login correct?**
+  - Yes → step 7 (cart preserved)
+  - No → credentials error and retry; re-enters at \`((CO))\`
+
+- **D4 · Are the contact/address/shipping details valid?**
+  - Yes → continue to payment
+  - No → inline error on the fields and back to step 6
+
+- **D5 · Was the payment approved?** (CA6)
+  - Yes → step 8 (order, confirmation and email)
+  - No → payment error, keep the data and retry with another method
+
+---
+
+### Alternate paths, errors, and edge cases
+
+- **Cart preserved (CA3):** throughout checkout the system keeps product, size, quantity and price.
+- **Product/size out of stock:** unavailability notice and suggest alternative sizes.
+- **Form validation error:** inline error and recovery in the same step.
+- **Payment declined:** clear message, preserve data and offer a retry.
+- **Connection points between flows:** \`((CO))\` → Checkout / authentication options
+
+---
+
+### Diagram
+
+\`\`\`mermaid
+flowchart TD
+    A([Start: user lands on the website]) --> B[Browses and filters jeans]
+    B --> C[Opens the product detail]
+    C --> D[Picks a size and Adds to cart]
+    D --> E{Stock available?}
+    E -->|No| F[Out-of-stock notice + suggest sizes]:::error
+    F --> C
+    E -->|Yes| G[Goes to cart and clicks Checkout]
+    G --> H{Signed in?}
+    H -->|Yes| P[Enters/confirms payment and summary]
+    H -->|No| I[/Options: Sign in / Create account / Guest/]
+    I -->|Sign in| J[/Login/]
+    J --> K{Login correct?}
+    K -->|No| L[Credentials error + retry]:::error
+    L --> CO((CO))
+    K -->|Yes| P
+    I -->|Create account| M[/Registration/]
+    M --> P
+    I -->|Continue as guest| N[Contact, address and shipping details]
+    N --> O{Valid details?}
+    O -->|No| Q[Inline error on fields]:::error
+    Q --> N
+    O -->|Yes| P
+    P --> R{Payment approved?}
+    R -->|No| S[Payment error + keep data]:::error
+    S --> P
+    R -->|Yes| T[Generates order and shows confirmation]:::success
+    T --> U[Sends confirmation email]:::success
+    U --> V([End: order confirmed])
+    classDef success fill:#CFF7D3,stroke:#008043;
+    classDef error fill:#FFE2E0,stroke:#BD2915;
+    classDef decision fill:#E5F4FF,stroke:#0768CF;
+    classDef options fill:#F1E5FF,stroke:#7C2BDA;
+    class E,H,K,O,R decision;
+    class I,J,M options;
+\`\`\`
+
+---
+
+### Assumptions and open questions
+
+- After login/registration the user returns to the exact checkout point without losing data. **Validate with product.**
+- The cart is preserved via guest session/cookie. **Confirm persistence duration.**
+- Stock is validated when adding to cart and again before confirming payment. **Confirm whether stock is temporarily reserved.**
+- Post-purchase registration is optional and must not block the confirmation. **Confirm which data is preserved.**
+`;
 
   const archivo = document.getElementById('archivo');
   const texto = document.getElementById('texto');
@@ -195,7 +316,7 @@
   function aplicarIdioma(lang) {
     idiomaActual = lang;
     const tx = textos();
-    for (const id of ['tituloPanel', 'labelArchivo', 'ayudaArchivo', 'labelPegar', 'textoDocs', 'textoEdgeCases', 'textoRepetirFlow', 'labelLayout', 'textoSoloDensos', 'labelLaneReingreso', 'labelLaneAgrupacion', 'labelLaneOrientacion', 'labelDireccion', 'labelIdioma']) {
+    for (const id of ['tituloPanel', 'labelArchivo', 'ayudaArchivo', 'labelPegar', 'descargarEjemplo', 'textoDocs', 'textoEdgeCases', 'textoRepetirFlow', 'labelLayout', 'textoSoloDensos', 'labelLaneReingreso', 'labelLaneAgrupacion', 'labelLaneOrientacion', 'labelDireccion', 'labelIdioma']) {
       document.getElementById(id).textContent = tx[id];
     }
     document.getElementById('generar').textContent = tx.generar;
@@ -232,6 +353,20 @@
   };
 
   texto.addEventListener('input', () => { nombreArchivo = null; }); // editado a mano: ya no es "el archivo"
+
+  // descarga del ejemplo: Blob UTF-8 + <a download> (la UI corre en un
+  // iframe con APIs de browser; el main thread no tiene filesystem)
+  document.getElementById('descargarEjemplo').addEventListener('click', () => {
+    const blob = new Blob([EXAMPLE_MARKDOWN], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'user-flow-example.md';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
 
   document.getElementById('generar').addEventListener('click', () => {
     const contenido = leerValor(texto) || '';

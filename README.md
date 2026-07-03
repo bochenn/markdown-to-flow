@@ -181,6 +181,12 @@ it finds.
     which holds the cards and the nested **"🧩 Base components"** Section
     (the Component Set) at the end of the column.
 
+- **Example file**: the panel has a "Download example markdown" button (in
+  the panel language) that downloads `user-flow-example.md` — a single-flow
+  user flow showing shapes, semantic classes, a `((CO))` junction with its
+  legend and all documentation sections — so you can try the plugin without
+  writing anything. Embedded as a UTF-8 Blob in the UI (no network needed).
+
 ## Commands
 
 ```bash
