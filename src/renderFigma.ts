@@ -697,9 +697,9 @@ function pathFlecha(puntos: Punto[], tam = 8): string {
 }
 
 // Badge negro tipo pill para el label de un conector, centrado en (cx, cy).
-// Solo reemplaza cómo se muestra el label; la línea/flecha no se toca.
-// En Figma Design es una instance de la variante Type=Label del Component Set;
-// en FigJam (sin components) es un frame armado a mano con el mismo estilo.
+// Badge de label SOLO para Figma Design (instance de la variante Type=Label):
+// la línea simulada no puede llevar texto propio. En FigJam el label va como
+// texto NATIVO del conector (connector.text) — sin overlay.
 function crearBadgeLabel(label: string, cx: number, cy: number, comps?: ComponentesBase | null): SceneNode {
   if (comps) {
     const instancia = comps.label.createInstance();
@@ -710,33 +710,20 @@ function crearBadgeLabel(label: string, cx: number, cy: number, comps?: Componen
     instancia.y = cy - instancia.height / 2;
     return instancia;
   }
-  const badge = figma.createFrame();
-  badge.name = label;
-  badge.layoutMode = 'HORIZONTAL';
-  badge.primaryAxisSizingMode = 'AUTO';  // HUG: crece con el texto, sin límite
-  badge.counterAxisSizingMode = 'AUTO';
-  badge.fills = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }];
-  badge.paddingLeft = badge.paddingRight = 6;
-  badge.paddingTop = badge.paddingBottom = 4;
-  badge.cornerRadius = 11; // pill completo para fuente 12 + padding 4
-
+  // degradación mínima si faltara el Component Set (no debería pasar en Design)
   const texto = figma.createText();
   texto.fontName = FUENTE;
   texto.fontSize = 12;
   texto.characters = label;
-  texto.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
-  badge.appendChild(texto);
-
-  badge.x = cx - badge.width / 2;
-  badge.y = cy - badge.height / 2;
-  return badge;
+  texto.x = cx - texto.width / 2;
+  texto.y = cy - texto.height / 2;
+  return texto;
 }
 
-// Conecta dos nodos: conector nativo en FigJam (default intacto, sin
-// overrides), línea con flecha dibujada en Figma Design usando el mismo
-// estilo (connectorStyle.ts) para que ambos editores se vean iguales.
-// offPath = true → punteado y gris tenue (salida del camino feliz o retorno).
-// El label (si hay) va como badge negro en el punto medio, no como texto nativo.
+// Conecta dos nodos: conector nativo en FigJam (con el label como texto
+// nativo del conector, editable con doble click), línea con flecha dibujada
+// en Figma Design usando el mismo estilo (connectorStyle.ts) + badge
+// Type=Label. offPath = true → punteado (salida del camino feliz o retorno).
 let dumpConectorLogueado = false;
 
 export async function createConnectorLike(origen: SceneNode, destino: SceneNode, label?: string, offPath?: boolean, lang: Idioma = 'en', ruteo?: ContextoRuteo, comps?: ComponentesBase | null): Promise<SceneNode[]> {
@@ -753,6 +740,9 @@ export async function createConnectorLike(origen: SceneNode, destino: SceneNode,
     // La API no tiene waypoints (limitación conocida): para los saltos largos
     // la única influencia es forzar el magnet hacia el lado del carril.
     conector.connectorLineType = 'ELBOWED';
+    // mismas puntas que en Design: círculo relleno al inicio, V de flecha al final
+    conector.connectorStartStrokeCap = 'CIRCLE_FILLED';
+    conector.connectorEndStrokeCap = 'ARROW_LINES';
     const magnet = ruta.lado === null ? 'AUTO' : (ruta.lado === 'derecha' ? 'RIGHT' : 'LEFT');
     conector.connectorStart = { endpointNodeId: origen.id, magnet };
     conector.connectorEnd = { endpointNodeId: destino.id, magnet };
@@ -775,11 +765,17 @@ export async function createConnectorLike(origen: SceneNode, destino: SceneNode,
       conector.dashPattern = [6, 6]; // el punteado es la única señal de edge case
     }
     if (label) {
-      const medio = puntoMedioRuta(ruta.puntos);
-      const badge = crearBadgeLabel(label, medio.x, medio.y, comps);
-      // el badge pasa a ser obstáculo para los conectores siguientes
-      if (ruteo) ruteo.obstaculos.push({ x: badge.x, y: badge.y, width: badge.width, height: badge.height });
-      return [conector, badge];
+      // label NATIVO del conector (FigJam lo centra y corta la línea solo);
+      // fijar una fuente ya cargada antes de setear characters
+      conector.text.fontName = FUENTE;
+      conector.text.characters = label;
+      // el texto ocupa el punto medio: caja estimada como obstáculo para que
+      // las bandas de otros conectores lo sigan esquivando
+      if (ruteo) {
+        const medio = puntoMedioRuta(ruta.puntos);
+        const ancho = label.length * 7 + 12;
+        ruteo.obstaculos.push({ x: medio.x - ancho / 2, y: medio.y - 11, width: ancho, height: 22 });
+      }
     }
     return [conector];
   }
@@ -926,10 +922,10 @@ export function createSectionCard(titulo: string, bloques: BloqueCard[], x: numb
     };
     for (const linea of lineas) {
       const rico = construirRico(linea.texto);
-      const token = comps ? rico.texto.match(REGEX_TOKEN_FORMA) : null;
+      const token = rico.texto.match(REGEX_TOKEN_FORMA);
       if (token && token.index !== undefined) {
         volcar();
-        card.appendChild(crearFilaConIcono(rico, token, comps!, 13, '    '.repeat(linea.sangria)));
+        card.appendChild(crearFilaConIcono(rico, token, comps || null, 13, '    '.repeat(linea.sangria)));
       } else {
         pendientes.push(linea);
       }
@@ -952,6 +948,18 @@ export function createSectionCard(titulo: string, bloques: BloqueCard[], x: numb
   // la leyenda de formas se completa con la de conectores (generada por el plugin)
   if (huboLeyenda) {
     card.appendChild(crearLeyendaConectores(lang));
+  }
+
+  // Medir-y-ajustar: la tabla nativa de FigJam define sus propios anchos de
+  // columna y puede desbordar el ancho estimado de la card (que la clipearía).
+  // Si algún hijo quedó más ancho que el contenido, la card crece a medida.
+  // En Design es un no-op (la tabla simulada deriva del ancho de la card).
+  let maxAnchoHijo = 0;
+  for (const hijo of card.children) {
+    maxAnchoHijo = Math.max(maxAnchoHijo, hijo.width);
+  }
+  if (maxAnchoHijo + 48 > card.width) {
+    card.resize(maxAnchoHijo + 48, card.height);
   }
 
   card.x = x;
@@ -1465,11 +1473,74 @@ function inicialesDeToken(token: string): string {
   return m ? m[1] : '';
 }
 
+// Fallback geométrico para FigJam (sin components): formas puras a 24px con
+// los mismos colores — la card de leyenda queda idéntica en ambos editores.
+function crearIconoFormaGeometrico(
+  forma: Forma,
+  opciones?: { texto?: string; fill?: Color; stroke?: Color },
+): SceneNode {
+  const base = ESTILOS_DEFAULT[forma];
+  const fill = (opciones && opciones.fill) || base.fill;
+  const stroke = (opciones && opciones.stroke) || base.stroke;
+
+  if (forma === 'inicioFin' || forma === 'conector') {
+    const marco = figma.createFrame();
+    marco.resize(24, 24);
+    marco.fills = [];
+    marco.clipsContent = false;
+    const circulo = figma.createEllipse();
+    circulo.resize(24, 24);
+    circulo.fills = [{ type: 'SOLID', color: fill }];
+    circulo.strokes = [{ type: 'SOLID', color: stroke }];
+    circulo.strokeWeight = 1.5;
+    marco.appendChild(circulo);
+    if (forma === 'conector') {
+      const anillo = figma.createEllipse();
+      anillo.resize(17, 17);
+      anillo.x = anillo.y = 3.5;
+      anillo.fills = [];
+      anillo.strokes = [{ type: 'SOLID', color: stroke }];
+      anillo.strokeWeight = 0.8;
+      marco.appendChild(anillo);
+      if (opciones && opciones.texto) {
+        const iniciales = figma.createText();
+        iniciales.fontName = FUENTE_BOLD;
+        iniciales.fontSize = 6.5;
+        iniciales.characters = opciones.texto;
+        iniciales.fills = pinturaTextoNodo(NEGRO);
+        iniciales.textAlignHorizontal = 'CENTER';
+        marco.appendChild(iniciales);
+        iniciales.resize(24, iniciales.height);
+        iniciales.x = 0;
+        iniciales.y = (24 - iniciales.height) / 2;
+      }
+    }
+    return marco;
+  }
+  if (forma === 'decision') {
+    const rombo = figma.createRectangle();
+    rombo.resize(16, 16);
+    rombo.rotation = 45;
+    rombo.fills = [{ type: 'SOLID', color: fill }];
+    rombo.strokes = [{ type: 'SOLID', color: stroke }];
+    rombo.strokeWeight = 1.5;
+    return rombo;
+  }
+  const rect = figma.createRectangle();
+  rect.resize(24, 17);
+  rect.cornerRadius = 2;
+  rect.fills = [{ type: 'SOLID', color: fill }];
+  rect.strokes = [{ type: 'SOLID', color: stroke }];
+  rect.strokeWeight = 1.5;
+  return rect;
+}
+
 function crearIconoForma(
   forma: Forma,
-  comps: ComponentesBase,
+  comps: ComponentesBase | null,
   opciones?: { texto?: string; fill?: Color; stroke?: Color },
-): InstanceNode {
+): SceneNode {
+  if (!comps) return crearIconoFormaGeometrico(forma, opciones);
   const icono = comps.variantes[forma].createInstance();
   const textoNodo = icono.findOne((n) => n.type === 'TEXT') as TextNode | null;
   // con texto (ej. las iniciales "CO") queda visible y escala con el rescale;
@@ -1613,7 +1684,7 @@ function textoConFormatos(
 function crearFilaConIcono(
   rico: { texto: string; negritas: { inicio: number; fin: number }[]; codigo: { inicio: number; fin: number }[] },
   match: RegExpMatchArray,
-  comps: ComponentesBase,
+  comps: ComponentesBase | null,
   fontSize: number,
   prefijo: string,
 ): FrameNode {
@@ -1646,9 +1717,12 @@ function crearFilaConIcono(
 }
 
 // Tabla dentro de una card: nativa en FigJam (createTable + cellAt), simulada
-// con frames en Figma Design. Devuelve el nodo listo para appendChild.
+// con frames en Figma Design. La tabla de LEYENDA usa siempre la simulada en
+// ambos editores: las celdas nativas de FigJam solo aceptan texto y la
+// leyenda embebe íconos. Devuelve el nodo listo para appendChild.
 function crearTabla(tabla: TablaCard, anchoDisponible: number, lang: Idioma, comps?: ComponentesBase | null): SceneNode {
-  if (figma.editorType === 'figjam') {
+  const esLeyenda = esTablaLeyenda(tabla);
+  if (figma.editorType === 'figjam' && !esLeyenda) {
     try {
       const nativa = figma.createTable(tabla.filas.length + 1, tabla.headers.length);
       // fijar SIEMPRE una fuente ya cargada antes de setear characters: la
@@ -1700,8 +1774,6 @@ function crearTabla(tabla: TablaCard, anchoDisponible: number, lang: Idioma, com
 
   // tabla de leyenda (caso conocido): headers "Elemento" + "Forma" → la celda
   // de Forma lleva SIEMPRE su ícono mapeado por el texto de Elemento
-  const esLeyenda = comps && esTablaLeyenda(tabla);
-
   const crearFila = (valores: string[], esHeader: boolean) => {
     const fila = figma.createFrame();
     fila.layoutMode = 'HORIZONTAL';
@@ -1734,17 +1806,17 @@ function crearTabla(tabla: TablaCard, anchoDisponible: number, lang: Idioma, com
         if (textoSinToken.texto.trim().length > 0) {
           filaIcono.appendChild(textoConFormatos(textoSinToken.texto, textoSinToken.negritas, textoSinToken.codigo, 12));
         }
-        filaIcono.appendChild(crearIconoForma(spec.forma, comps!, { fill: spec.fill, stroke: spec.stroke }));
+        filaIcono.appendChild(crearIconoForma(spec.forma, comps || null, { fill: spec.fill, stroke: spec.stroke }));
         celda.appendChild(filaIcono);
         fila.appendChild(celda);
         return;
       }
 
       const rico = construirRico(valor);
-      const token = !esHeader && comps ? rico.texto.match(REGEX_TOKEN_FORMA) : null;
+      const token = !esHeader ? rico.texto.match(REGEX_TOKEN_FORMA) : null;
       if (token && token.index !== undefined) {
         // celda con token de forma → texto + ícono real en fila horizontal
-        celda.appendChild(crearFilaConIcono(rico, token, comps!, 12, ''));
+        celda.appendChild(crearFilaConIcono(rico, token, comps || null, 12, ''));
       } else {
         const texto = figma.createText();
         texto.fontName = esHeader ? FUENTE_BOLD : FUENTE_REGULAR;

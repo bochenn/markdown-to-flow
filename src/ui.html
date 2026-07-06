@@ -87,8 +87,15 @@ body {
 .select-envoltura select { appearance: none; -webkit-appearance: none; height: 32px; min-width: 117px; padding: 0 28px 0 8px; border: 1px solid var(--divider); border-radius: var(--radius); background: var(--bg); color: var(--text); font: 400 11px/16px Inter; letter-spacing: 0.005em; cursor: pointer; }
 .select-envoltura .chevron { position: absolute; right: 2px; top: 4px; pointer-events: none; color: var(--text); }
 
-#status { white-space: pre-wrap; }
-#status.error { color: var(--error); }
+/* detalle inline (resumen completo + warnings) — neutro; los estados de
+   color viven en el slot del footer */
+#status { white-space: pre-wrap; color: var(--text-muted); }
+
+/* slot de estado en el footer: nunca empuja los botones (flex 1 + ellipsis) */
+.status-pie { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-pie.error { color: var(--error); }
+.status-pie.ok { color: var(--success); }
+.pie > button { flex: none; }
 
 #panelAbout h3 { font: 500 13px/22px Inter; letter-spacing: -0.0025em; color: var(--text-section); margin: 0; }
 #panelAbout h4 { font: 600 11px/16px Inter; letter-spacing: 0.005em; margin: 8px 0 0; }
@@ -313,6 +320,7 @@ body {
   </div>
 
   <div class="pie">
+    <div class="status-pie" id="statusPie"></div>
     <button class="boton-secundario" id="cancelar">Cancel</button>
     <button class="boton-primario" id="generar">Generate</button>
   </div>
@@ -409,6 +417,7 @@ body {
       errorBinario: "The file doesn't look like readable text (is it a binary like .docx or .rtf?). Convert it to plain text or markdown.",
       errorVacio: 'No content to process: upload a file or paste the text.',
       avisos: 'Warnings:',
+      verAvisos: '{n} warnings — details in the Upload tab',
     },
     es: {
       tabInput: 'Subir',
@@ -487,6 +496,7 @@ body {
       errorBinario: 'El archivo no parece ser texto legible (¿es un binario como .docx o .rtf?). Convertilo a texto plano o markdown.',
       errorVacio: 'No hay contenido para procesar: subí un archivo o pegá el texto.',
       avisos: 'Avisos:',
+      verAvisos: '{n} avisos — detalle en la pestaña Subir',
     },
   };
 
@@ -639,6 +649,7 @@ flowchart TD
       for (const otro of document.querySelectorAll('.tab')) otro.classList.toggle('activa', otro === boton);
       const activo = boton.getAttribute('data-tab');
       for (const clave in paneles) paneles[clave].classList.toggle('oculto', clave !== activo);
+      mostrarEstado('', ''); // el mensaje del footer no persiste entre tabs
     });
   }
 
@@ -680,6 +691,7 @@ flowchart TD
   archivo.onchange = () => {
     const f = archivo.files[0];
     if (!f) return;
+    limpiarEstado();
     const lector = new FileReader();
     lector.onload = () => {
       const contenido = lector.result;
@@ -705,7 +717,10 @@ flowchart TD
     lector.readAsText(f, 'utf-8'); // encoding explícito, no depender del default
   };
 
-  texto.addEventListener('input', () => { nombreArchivo = null; }); // editado a mano: ya no es "el archivo"
+  texto.addEventListener('input', () => {
+    nombreArchivo = null; // editado a mano: ya no es "el archivo"
+    limpiarEstado();      // input nuevo → mensaje viejo afuera
+  });
 
   // --- descarga del ejemplo: Blob UTF-8 + <a download> ---
   function descargarEjemplo() {
@@ -755,9 +770,21 @@ flowchart TD
     actualizarOpcionesLane(); // el caption dinámico del layout también cambia de idioma
   }
 
+  // Estado en el footer (compacto, con color) + detalle inline en el tab
+  // Upload (resumen completo y warnings, neutro).
+  const statusPie = document.getElementById('statusPie');
+  function mostrarEstado(mensaje, tipo) { // tipo: 'error' | 'ok' | '' (neutro)
+    statusPie.textContent = mensaje;
+    statusPie.title = mensaje; // el texto completo queda en el tooltip si hay ellipsis
+    statusPie.className = 'status-pie' + (tipo ? ' ' + tipo : '');
+  }
+  function limpiarEstado() {
+    mostrarEstado('', '');
+    status.textContent = '';
+  }
+  // compat: los callers viejos de "mostrar" van al footer
   function mostrar(mensaje, esError) {
-    status.textContent = mensaje;
-    status.className = esError ? 'error' : '';
+    mostrarEstado(mensaje, esError ? 'error' : '');
   }
 
   selectorIdioma.addEventListener('change', () => {
@@ -818,9 +845,16 @@ flowchart TD
       selectorIdioma.value = msg.lang;
       if (msg.lang !== idiomaActual) aplicarIdioma(msg.lang);
     } else if (msg.type === 'ok') {
-      mostrar(msg.resumen + (msg.warnings.length ? '\n' + textos().avisos + '\n- ' + msg.warnings.join('\n- ') : ''));
+      // footer: compacto en verde; tab Upload: detalle completo con warnings
+      const sufijo = msg.warnings.length
+        ? ' — ' + textos().verAvisos.replace('{n}', String(msg.warnings.length))
+        : '';
+      mostrarEstado('✓ ' + msg.resumen + sufijo, 'ok');
+      status.textContent = msg.warnings.length
+        ? msg.resumen + '\n' + textos().avisos + '\n- ' + msg.warnings.join('\n- ')
+        : '';
     } else if (msg.type === 'error') {
-      mostrar('Error: ' + msg.mensaje, true);
+      mostrarEstado('Error: ' + msg.mensaje, 'error');
     }
   };
 </script>
